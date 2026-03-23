@@ -1,0 +1,23 @@
+# @zakkster/lite-noise
+> Zero-GC seeded Simplex 2D/3D noise + FBM + Curl. Deterministic.
+
+## Install
+npm i @zakkster/lite-noise
+
+## Import
+import { seedNoise, simplex2, simplex3, fbm2, fbm3, curl2 } from '@zakkster/lite-noise';
+
+## Key Facts
+- Seeded via seedNoise(seed) — deterministic permutation table
+- simplex2(x, y) → [-1, 1]
+- simplex3(x, y, z) → [-1, 1]
+- fbm2(x, y, octaves?, lacunarity?, gain?) — unrolled, zero allocation
+- fbm3(x, y, z, octaves?, lacunarity?, gain?) — unrolled, zero allocation
+- curl2(x, y, out) — divergence-free 2D vector, caller owns output
+- Dependencies: @zakkster/lite-random
+- No rest params, no .map(), no spread in any hot path
+
+## Usage
+seedNoise(42);
+const height = fbm2(x * 0.01, y * 0.01, 6);
+const curl = curl2(px, py, myVec); // myVec.x, myVec.y updated

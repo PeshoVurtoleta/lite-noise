@@ -1,0 +1,50 @@
+{
+  "name": "@zakkster/lite-noise",
+  "version": "1.0.0",
+  "description": "Zero-GC seeded Simplex 2D/3D noise + FBM + Curl. Deterministic via seeded permutation table.",
+  "author": "Zahary Shinikchiev <shinikchiev@yahoo.com>",
+  "license": "MIT",
+  "type": "module",
+  "main": "Noise.js",
+  "types": "Noise.d.ts",
+  "exports": {
+    ".": {
+      "import": "./Noise.js",
+      "types": "./Noise.d.ts"
+    }
+  },
+  "files": [
+    "Noise.js",
+    "Noise.d.ts",
+    "llms.txt"
+  ],
+  "keywords": [
+    "noise",
+    "simplex",
+    "perlin",
+    "fbm",
+    "curl",
+    "procedural",
+    "terrain",
+    "zero-gc"
+  ],
+  "sideEffects": false,
+  "homepage": "https://github.com/PeshoVurtoleta/lite-noise#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PeshoVurtoleta/lite-noise.git"
+  },
+  "bugs": {
+    "url": "https://github.com/PeshoVurtoleta/lite-noise/issues",
+    "email": "shinikchiev@yahoo.com"
+  },
+  "dependencies": {
+    "@zakkster/lite-random": "^1.0.0"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.0"
+  },
+  "scripts": {
+    "test": "vitest run"
+  }
+}
