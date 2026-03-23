@@ -1,6 +1,6 @@
 {
   "name": "@zakkster/lite-noise",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Zero-GC seeded Simplex 2D/3D noise + FBM + Curl. Deterministic via seeded permutation table.",
   "author": "Zahary Shinikchiev <shinikchiev@yahoo.com>",
   "license": "MIT",

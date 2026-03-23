@@ -5,6 +5,7 @@
 [![npm downloads](https://img.shields.io/npm/dm/@zakkster/lite-noise?style=for-the-badge&color=blue)](https://www.npmjs.com/package/@zakkster/lite-noise)
 [![npm total downloads](https://img.shields.io/npm/dt/@zakkster/lite-noise?style=for-the-badge&color=blue)](https://www.npmjs.com/package/@zakkster/lite-noise)
 ![TypeScript](https://img.shields.io/badge/TypeScript-Types-informational)
+![Dependencies](https://img.shields.io/badge/dependencies-1%20(%40zakkster%2Flite--random)-brightgreen)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
 ## 🌊 What is lite-noise?
