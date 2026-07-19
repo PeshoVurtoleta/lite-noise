@@ -1,0 +1,72 @@
+{
+  "name": "@zakkster/lite-noise",
+  "version": "1.1.0",
+  "description": "Zero-GC seeded Simplex 2D/3D noise, unrolled FBM, curl2, curl3, domain warp, and bakeable heightfields. Deterministic via seeded permutation table.",
+  "author": "Zahary Shinikchiev <shinikchiev@yahoo.com>",
+  "license": "MIT",
+  "type": "module",
+  "main": "./Noise.js",
+  "module": "./Noise.js",
+  "types": "./Noise.d.ts",
+  "exports": {
+    ".": {
+      "types": "./Noise.d.ts",
+      "node": "./Noise.js",
+      "import": "./Noise.js",
+      "default": "./Noise.js"
+    }
+  },
+  "files": [
+    "Noise.js",
+    "Noise.d.ts",
+    "llms.txt",
+    "CHANGELOG.md",
+    "LICENSE.txt"
+  ],
+  "keywords": [
+    "noise",
+    "simplex",
+    "perlin",
+    "fbm",
+    "curl",
+    "curl3",
+    "domain-warp",
+    "heightfield",
+    "procedural",
+    "terrain",
+    "zero-gc"
+  ],
+  "sideEffects": false,
+  "homepage": "https://github.com/PeshoVurtoleta/lite-noise#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PeshoVurtoleta/lite-noise.git"
+  },
+  "bugs": {
+    "url": "https://github.com/PeshoVurtoleta/lite-noise/issues",
+    "email": "shinikchiev@yahoo.com"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "funding": {
+    "type": "github",
+    "url": "https://github.com/sponsors/PeshoVurtoleta"
+  },
+  "dependencies": {
+    "@zakkster/lite-random": "^1.0.0"
+  },
+  "devDependencies": {
+    "@zakkster/lite-gc-profiler": "^1.7.0",
+    "esbuild": "^0.25.0",
+    "vitest": "^3.0.0"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:gc": "node magnitudes/scripts/test-gc.mjs",
+    "bench": "node magnitudes/bench/terrain.mjs",
+    "bundle-check": "node magnitudes/scripts/bundle-check.mjs",
+    "goldens": "node magnitudes/scripts/regenerate-goldens.mjs",
+    "prepublishOnly": "npm run test && npm run test:gc && npm run bundle-check"
+  }
+}

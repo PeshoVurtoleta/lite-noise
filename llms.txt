@@ -1,0 +1,164 @@
+# @zakkster/lite-noise v1.1.0
+
+> Zero-GC seeded Simplex 2D/3D noise, unrolled FBM, curl2, curl3,
+> Quilez-style domain warp, and bakeable heightfields. Deterministic.
+> Single-file ESM, < 1.5 KB min+gz, one dependency (@zakkster/lite-random).
+
+## Install
+npm i @zakkster/lite-noise
+
+## Import
+import {
+    seedNoise,
+    simplex2, simplex3,
+    fbm2, fbm3,
+    curl2, curl3,
+    warp2,
+    fillField2,
+} from '@zakkster/lite-noise';
+
+## API
+
+- seedNoise(seed = 0): void
+    Rebuilds internal permutation table. Auto-seeded with 0 on module load.
+    Setup cost (one Uint8Array + one Random); not on any hot path.
+
+- simplex2(x, y): number in ~[-1, 1]
+- simplex3(x, y, z): number in ~[-1, 1]
+
+- fbm2(x, y, octaves = 4, lacunarity = 2, gain = 0.5): number
+    Unrolled 2D FBM over simplex2. Zero allocation.
+- fbm3(x, y, z, octaves = 4, lacunarity = 2, gain = 0.5): number
+    Unrolled 3D FBM over simplex3. Zero allocation.
+
+- curl2(x, y, out): out
+    Divergence-free 2D vector. out = { x, y }, caller-owned.
+    Four simplex2 samples (central-difference), precomputed 1/(2*eps).
+
+- curl3(x, y, z, out): out    [v1.1.0]
+    Divergence-free 3D vector via three offset simplex3 fields treated as
+    a vector potential psi = (psi1, psi2, psi3). Curl formula:
+        curl.x = d(psi3)/dy - d(psi2)/dz
+        curl.y = d(psi1)/dz - d(psi3)/dx
+        curl.z = d(psi2)/dx - d(psi1)/dy
+    Twelve simplex3 samples per call. out = { x, y, z }, caller-owned.
+    Suitable for volumetric smoke.
+
+- warp2(x, y, strength, out): out    [v1.1.0]
+    Quilez-style domain warp. Writes warped coords into out = { x, y }.
+    Two fbm2 evaluations per sample using canonical offset pairs
+    (5.2/1.3 and 1.7/9.2). Compose with fbm2(out.x, out.y) for the
+    final warped noise value.
+
+- fillField2(out, w, h, opts?): out    [v1.1.0]
+    Bake a w * h FBM heightfield into a caller-supplied Float32Array or
+    Float64Array (length >= w * h). Row-incremental coord stepping:
+    `px += scale`, `py += scale` replace per-cell multiplies.
+    opts (all optional, guarded so the omitted-opts path allocates
+    nothing): scale = 0.01, octaves = 4, lacunarity = 2, gain = 0.5,
+    ox = 0, oy = 0. Zero allocation.
+
+## Key facts
+
+- Seeded via @zakkster/lite-random — deterministic permutation table.
+- No rest params, no .map, no spread anywhere on a hot path.
+- Vector APIs never allocate: caller passes { x, y } or { x, y, z }.
+- fillField2 accepts `opts` as either an object or omitted; the omitted-
+  opts path uses `opts?.x ?? default` (zero-alloc), not `opts = {}`
+  (which would allocate).
+- Auto-seeded with 0 on module load; explicit seedNoise(n) is idempotent.
+
+## Shared module state (important)
+
+The internal permutation table is module-scoped. All consumers importing
+this module share it. `seedNoise(n)` mutates the SAME table:
+
+    // terrain
+    seedNoise(42); simplex2(x, y);   // seed-42 table
+    // particles (elsewhere)
+    seedNoise(7);  simplex2(x, y);   // ← everyone now on seed-7
+    // terrain
+    simplex2(x, y);                  // ← silently changed
+
+For a single-consumer app this is invisible. For two subsystems each
+wanting their own seed stream, either reseed before every batch (from a
+saved seed value) or wait for `createNoise` in v1.2.0.
+
+## Degenerate inputs
+
+- fbm2 / fbm3 with octaves = 0 (or negative) return 0, not NaN. This
+  protects buffers baked from data-driven biome / terrain configs.
+- simplex2 / simplex3 with NaN or Infinity inputs return 0 (the
+  truncation-to-integer path yields a plausible value rather than
+  propagating NaN). Validate upstream if propagation is required.
+
+## Output magnitudes
+
+Measured over 100k samples at seed 42:
+- simplex2 : max |v| ~= 0.998        (docs "approx. [-1, 1]")
+- simplex3 : max |v| ~= 0.976
+- curl2    : mean |v| ~= 3.4         (scale ~0.005 inputs)
+- curl3    : mean |v| ~= 3.8, max ~= 10.6
+- curl3 divergence residual: ~0.6% of |v| — finite-difference floor
+
+Scale curl outputs before writing to particle velocities.
+
+## Determinism goldens (seed = 42)
+
+FNV-1a 32-bit over Float32 bytes:
+- 256x256 default fillField2  -> ddef5970
+- 128x128 warp2 + fbm2        -> ca4f9f1e
+- 32x32x8 curl3 slab (packed) -> 1ac7a518
+
+Any change to a golden is a breaking change and must be called out in
+CHANGELOG.md. Regenerate: `npm run goldens`.
+
+## Zero-GC gate (falsifiable, not asserted)
+
+`npm run test:gc` runs assertOps under node --expose-gc for every hot
+path with `stabilize: true` (retention-delta measurement) and rules
+`{ maxBytesPerOp: 2, maxMajorsPerKOp: 0 }`. The 2 B/op ceiling matches
+lite-gc-profiler's docs-recommended tier for 1K+ ops (V8 IC / feedback-
+vector floor); the strict zero-majors rule catches any real allocation
+that hides under the byte-budget noise. A real leak crosses both bars.
+
+## Bundle budget
+
+< 1.5 KB minified + gzipped, enforced via `npm run bundle-check`
+(esbuild --minify with @zakkster/lite-random external). New variants
+must share the octave skeleton or they don't ship.
+
+## Usage sketches
+
+// Terrain heightmap, zero alloc per frame
+seedNoise(42);
+const field = new Float32Array(256 * 256);
+fillField2(field, 256, 256, { scale: 0.01, octaves: 6 });
+
+// Curl flow field for particles (2D)
+const v = { x: 0, y: 0 };
+for (let i = 0; i < particles.length; i++) {
+    curl2(particles[i].x * 0.005, particles[i].y * 0.005, v);
+    particles[i].vx = v.x;
+    particles[i].vy = v.y;
+}
+
+// Volumetric smoke velocity (3D)
+const v3 = { x: 0, y: 0, z: 0 };
+curl3(px * 0.02, py * 0.02, pz * 0.02, v3);
+
+// Warped FBM ("cloudy terrain") in two calls
+const warped = { x: 0, y: 0 };
+warp2(x * 0.01, y * 0.01, 1.5, warped);
+const value = fbm2(warped.x, warped.y);
+
+## Dependencies
+
+- @zakkster/lite-random  (production, seed provenance)
+- @zakkster/lite-gc-profiler  (dev only, gate on zero-alloc)
+
+## Repository
+
+https://github.com/PeshoVurtoleta/lite-noise
+
+Copyright (c) Zahary Shinikchiev. MIT.
