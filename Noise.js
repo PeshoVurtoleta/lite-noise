@@ -19,10 +19,24 @@
  * max |v| ≈ 10.6. Wire curl output through a scale factor before writing to
  * particle velocities.
  *
- * Depends on: @zakkster/lite-random (seed provenance)
+ * Zero runtime dependencies. Seed provenance is an inlined Mulberry32 PRNG
+ * (see `_rngNext` below); the determinism goldens pin its output sequence.
  */
 
-import { Random } from '@zakkster/lite-random';
+// ── Seeded PRNG (Mulberry32, inlined) ──
+// Inlined Mulberry32 -- the same core @zakkster/lite-random ships -- so this
+// package carries zero runtime dependencies. `seedNoise` is the only consumer:
+// it resets `_rngState` to the seed and draws 255 values for one Fisher-Yates
+// shuffle. Cold path: runs once per `seedNoise` call, never in a sampling hot
+// loop. The determinism goldens pin this exact sequence byte-for-byte, so the
+// inline is provably identical to the previous `new Random(seed).next()` draws.
+let _rngState = 0;
+function _rngNext() {
+    let t = _rngState = (_rngState + 0x6D2B79F5) | 0;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
 
 // ── Permutation table (seeded, 512 entries for wrap-around) ──
 const _perm = new Uint8Array(512);
@@ -42,12 +56,12 @@ const _grad3 = new Float32Array([
  * saved seed value), or wait for `createNoise` in v1.2.0.
  */
 export function seedNoise(seed = 0) {
-    const rng = new Random(seed);
+    _rngState = seed | 0;
     const p = new Uint8Array(256);
     for (let i = 0; i < 256; i++) p[i] = i;
     // Fisher-Yates shuffle
     for (let i = 255; i > 0; i--) {
-        const j = (rng.next() * (i + 1)) | 0;
+        const j = (_rngNext() * (i + 1)) | 0;
         const tmp = p[i]; p[i] = p[j]; p[j] = tmp;
     }
     for (let i = 0; i < 512; i++) _perm[i] = p[i & 255];

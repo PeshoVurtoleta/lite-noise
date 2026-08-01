@@ -7,7 +7,7 @@
 [![npm total downloads](https://img.shields.io/npm/dt/@zakkster/lite-noise?style=for-the-badge&color=blue)](https://www.npmjs.com/package/@zakkster/lite-noise)
 ![Zero-GC](https://img.shields.io/badge/Zero--GC-Hot%20path-00C853?style=for-the-badge&logo=leaf&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-Types-informational?style=for-the-badge)
-![Dependencies](https://img.shields.io/badge/dependencies-1%20(%40zakkster%2Flite--random)-brightgreen?style=for-the-badge)
+![Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen?style=for-the-badge)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
 ## 🌊 What is lite-noise?
@@ -23,11 +23,11 @@ It gives you:
 - 🌀 Curl noise (2D and 3D) for smoke, fluid, and volumetric particle movement
 - 🌀 Quilez-style domain warping over FBM
 - 🗺️ `fillField2` — bake a Float32Array heightfield in one call, row-incremental coord stepping
-- 🎲 Seeded via `@zakkster/lite-random` (deterministic, reproducible)
+- 🎲 Seeded via an inlined Mulberry32 PRNG (deterministic, reproducible, **zero runtime dependencies**)
 - 0️⃣ Zero allocation in any hot-path function (unrolled FBM, no rest/spread, no per-cell object synthesis)
 - 🧹 Caller-owned output for `curl2` / `curl3` / `warp2` (no shared reference bugs)
 - 🛡️ Zero-alloc claim made falsifiable via `@zakkster/lite-gc-profiler` gates (`npm run test:gc`)
-- 🪶 < 1.5 KB minified + gzipped
+- 🪶 ~1.52 KB minified + gzipped, self-contained (zero dependencies; measured by `npm run bundle-check`)
 
 Part of the [@zakkster/lite-*](https://www.npmjs.com/org/zakkster) ecosystem — micro-libraries built for deterministic, cache-friendly game development.
 
@@ -97,7 +97,9 @@ If two subsystems need independent seed streams, either arrange for one to resee
 |-----------------|--------------:|:-------:|:-------:|:-------:|:-------:|:-------:|:----------:|:-------:|--------------------------------------|
 | simplex-noise   | ~8 KB         | No      | No      | No      | No      | No      | No         | No      | `npm i simplex-noise`                |
 | noisejs         | ~4 KB         | Yes     | No      | No      | No      | No      | No         | No      | `npm i noisejs`                      |
-| **lite-noise**  | **< 1.5 KB**  | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes**    | **Yes** | `npm i @zakkster/lite-noise`         |
+| **lite-noise**  | **~1.52 KB**† | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes**    | **Yes** | `npm i @zakkster/lite-noise`         |
+
+† lite-noise's figure is minified **+ gzipped**, self-contained — the full installed footprint with **zero runtime dependencies** (1,518 B, `npm run bundle-check`). The other libraries' sizes are their published bundle sizes as listed on npm.
 
 ## ⚙️ API
 

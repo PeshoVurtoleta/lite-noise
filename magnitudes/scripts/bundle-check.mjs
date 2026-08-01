@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 // Bundle-size gate for @zakkster/lite-noise.
 //
-// Runs esbuild --minify with @zakkster/lite-random externalised, then
-// compresses through node:zlib.gzipSync (default level 6, matching the
-// semantic bundlephobia uses on its minzip badge). Fails if min+gz
-// exceeds the CEILING.
+// Runs esbuild --minify, then compresses through node:zlib.gzipSync (default
+// level 6, matching the semantic bundlephobia uses on its minzip badge). Fails
+// if min+gz exceeds the CEILING.
+//
+// As of the N0 inline (ADR 0001) the package has zero runtime dependencies, so
+// this measures the FULL self-contained install -- nothing is externalised.
+// The number is therefore the true installed footprint, not own-code-only.
 //
 // Run: node scripts/bundle-check.mjs
 
@@ -12,7 +15,7 @@ import { build } from 'esbuild';
 import { gzipSync } from 'node:zlib';
 import { readFileSync, unlinkSync } from 'node:fs';
 
-const CEILING = 1500;                  // bytes, min+gz — the "< 1.5 KB" claim
+const CEILING = 1550;                  // bytes, min+gz — self-contained, zero deps
 const OUT = 'test-bundle.js';
 
 await build({
@@ -20,7 +23,6 @@ await build({
     bundle: true,
     minify: true,
     format: 'esm',
-    external: ['@zakkster/lite-random'],
     outfile: OUT,
     logLevel: 'error',
 });

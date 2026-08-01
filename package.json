@@ -26,7 +26,6 @@
   "keywords": [
     "noise",
     "simplex",
-    "perlin",
     "fbm",
     "curl",
     "curl3",
@@ -53,20 +52,17 @@
     "type": "github",
     "url": "https://github.com/sponsors/PeshoVurtoleta"
   },
-  "dependencies": {
-    "@zakkster/lite-random": "^1.0.0"
-  },
   "devDependencies": {
     "@zakkster/lite-gc-profiler": "^1.7.0",
-    "esbuild": "^0.25.0",
-    "vitest": "^3.0.0"
+    "esbuild": "^0.25.0"
   },
   "scripts": {
-    "test": "vitest run",
+    "test": "node --test \"test/**/*.test.js\"",
     "test:gc": "node magnitudes/scripts/test-gc.mjs",
     "bench": "node magnitudes/bench/terrain.mjs",
     "bundle-check": "node magnitudes/scripts/bundle-check.mjs",
     "goldens": "node magnitudes/scripts/regenerate-goldens.mjs",
-    "prepublishOnly": "npm run test && npm run test:gc && npm run bundle-check"
+    "verify": "npm run test && npm run test:gc && npm run bundle-check",
+    "prepublishOnly": "npm run verify"
   }
 }

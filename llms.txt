@@ -2,7 +2,7 @@
 
 > Zero-GC seeded Simplex 2D/3D noise, unrolled FBM, curl2, curl3,
 > Quilez-style domain warp, and bakeable heightfields. Deterministic.
-> Single-file ESM, < 1.5 KB min+gz, one dependency (@zakkster/lite-random).
+> Single-file ESM, ~1.5 KB min+gz, zero runtime dependencies.
 
 ## Install
 npm i @zakkster/lite-noise
@@ -60,7 +60,7 @@ import {
 
 ## Key facts
 
-- Seeded via @zakkster/lite-random — deterministic permutation table.
+- Seeded via an inlined Mulberry32 PRNG — deterministic permutation table, zero runtime dependencies.
 - No rest params, no .map, no spread anywhere on a hot path.
 - Vector APIs never allocate: caller passes { x, y } or { x, y, z }.
 - fillField2 accepts `opts` as either an object or omitted; the omitted-
@@ -124,9 +124,10 @@ that hides under the byte-budget noise. A real leak crosses both bars.
 
 ## Bundle budget
 
-< 1.5 KB minified + gzipped, enforced via `npm run bundle-check`
-(esbuild --minify with @zakkster/lite-random external). New variants
-must share the octave skeleton or they don't ship.
+~1.5 KB minified + gzipped (1,518 B), self-contained with zero runtime
+dependencies, enforced via `npm run bundle-check` (esbuild --minify,
+nothing externalised). New variants must share the octave skeleton or
+they don't ship.
 
 ## Usage sketches
 
@@ -154,7 +155,7 @@ const value = fbm2(warped.x, warped.y);
 
 ## Dependencies
 
-- @zakkster/lite-random  (production, seed provenance)
+- None (production). Seed provenance is an inlined Mulberry32 PRNG.
 - @zakkster/lite-gc-profiler  (dev only, gate on zero-alloc)
 
 ## Repository

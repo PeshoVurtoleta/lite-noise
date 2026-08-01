@@ -2,6 +2,25 @@
 
 All notable changes to `@zakkster/lite-noise`.
 
+## [Unreleased]
+
+N0 hygiene pass — the package brought fully to the ecosystem's house law, and now **zero runtime dependencies**. No API, kernel, or seeding-*value* change; determinism goldens (`ddef5970` / `ca4f9f1e` / `1ac7a518`) unchanged, proving every change here is behavior-neutral.
+
+### Removed
+
+- **`@zakkster/lite-random` runtime dependency (NS-05).** It was used in exactly one place — `seedNoise`'s Fisher-Yates shuffle. Its six-line Mulberry32 core is now inlined as `_rngNext` in `Noise.js`, reproducing the previous `new Random(seed).next()` sequence byte-for-byte (the goldens are the proof). This reclaims the zero-dependency badge, makes the size claim reflect the true self-contained install, and removes the version-skew hazard (the old `^1.0.0` pin against lite-random's 1.1.0 could resolve a second copy alongside `lite-particles`'s `^1.1.0`). Decision recorded in `decisions/0001-lite-random.md`.
+
+### Changed
+
+- **Test runner: vitest -> `node --test`.** `test/Noise.test.js` ported from `describe/it/expect` to `node:test` + `node:assert/strict` — all 19 cases, same assertions. `vitest` removed as a `devDependency`; `vitest.config.mjs` deleted. `test` script is now `node --test "test/**/*.test.js"`. The house law is `node:test` only; lite-noise was the last vitest holdout.
+- **Size claim now measures the self-contained install.** Previously "< 1.5 KB" was own-code with `@zakkster/lite-random` externalised (1,472 B min+gz) — true for own code, but the installed footprint with the dependency was ~1.9 KB. With the dependency inlined the package is self-contained: **1,518 B min+gz**, stated across README / llms.txt as "~1.52 KB, zero dependencies". `bundle-check` no longer externalises anything and its ceiling is 1,550 B.
+- **`perlin` keyword removed** from `package.json`. The package implements Simplex noise (`simplex2` / `simplex3`), not classic Perlin gradient noise; there is no `perlin()` export. The keyword advertised an algorithm that does not ship.
+
+### Added
+
+- **`verify` script** — `test && test:gc && bundle-check`, matching the ecosystem's script shape. `prepublishOnly` now delegates to it.
+- **`decisions/0001-lite-random.md`** — ADR recording the NS-05 dependency decision (Accepted: inline).
+
 ## [1.1.0] — 2026-07-19
 
 Field baking + domain warp + 3D curl. Zero-alloc claim now falsifiable via a `@zakkster/lite-gc-profiler` gate. Determinism goldens committed. Bundle budget refreshed under the 1.5 KB min+gz ceiling. Ships `LICENSE.txt`. Guarded `bundle-check` and `test:gc` so absence is no longer indistinguishable from success.

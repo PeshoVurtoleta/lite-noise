@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
 import {
     seedNoise,
     simplex2, simplex3,
@@ -24,8 +25,8 @@ describe('lite-noise: simplex range', () => {
         seedNoise(42);
         for (let i = 0; i < 1000; i++) {
             const v = simplex2(i * 0.1, i * 0.07);
-            expect(v).toBeGreaterThanOrEqual(-1.01);
-            expect(v).toBeLessThanOrEqual(1.01);
+            assert.ok(v >= -1.01, `simplex2 below range: ${v}`);
+            assert.ok(v <= 1.01, `simplex2 above range: ${v}`);
         }
     });
 
@@ -33,8 +34,8 @@ describe('lite-noise: simplex range', () => {
         seedNoise(42);
         for (let i = 0; i < 100; i++) {
             const v = simplex3(i * 0.1, i * 0.07, i * 0.03);
-            expect(v).toBeGreaterThanOrEqual(-1.01);
-            expect(v).toBeLessThanOrEqual(1.01);
+            assert.ok(v >= -1.01, `simplex3 below range: ${v}`);
+            assert.ok(v <= 1.01, `simplex3 above range: ${v}`);
         }
     });
 });
@@ -43,13 +44,13 @@ describe('lite-noise: seed determinism', () => {
     it('seedNoise produces deterministic results', () => {
         seedNoise(99); const a = simplex2(1.5, 2.5);
         seedNoise(99); const b = simplex2(1.5, 2.5);
-        expect(a).toBe(b);
+        assert.strictEqual(a, b);
     });
 
     it('different seeds produce different results', () => {
         seedNoise(1); const a = simplex2(1.5, 2.5);
         seedNoise(2); const b = simplex2(1.5, 2.5);
-        expect(a).not.toBe(b);
+        assert.notStrictEqual(a, b);
     });
 });
 
@@ -58,33 +59,33 @@ describe('lite-noise: fbm', () => {
         seedNoise(42);
         for (let i = 0; i < 100; i++) {
             const v = fbm2(i * 0.05, i * 0.03);
-            expect(v).toBeGreaterThanOrEqual(-1.1);
-            expect(v).toBeLessThanOrEqual(1.1);
+            assert.ok(v >= -1.1, `fbm2 below range: ${v}`);
+            assert.ok(v <= 1.1, `fbm2 above range: ${v}`);
         }
     });
 
     it('fbm3 stays in ~[-1, 1]', () => {
         seedNoise(42);
         const v = fbm3(0.5, 0.5, 0.5, 4);
-        expect(v).toBeGreaterThanOrEqual(-1.1);
-        expect(v).toBeLessThanOrEqual(1.1);
+        assert.ok(v >= -1.1, `fbm3 below range: ${v}`);
+        assert.ok(v <= 1.1, `fbm3 above range: ${v}`);
     });
 
     // Degenerate octaves must NOT poison the buffer through fillField2
-    // — data-driven biome / terrain configs will hit this.
+    // -- data-driven biome / terrain configs will hit this.
     it('fbm2 returns 0 (not NaN) when octaves is 0', () => {
         seedNoise(42);
-        expect(fbm2(1.7, 2.3, 0)).toBe(0);
+        assert.strictEqual(fbm2(1.7, 2.3, 0), 0);
     });
 
     it('fbm2 returns 0 (not NaN) when octaves is negative', () => {
         seedNoise(42);
-        expect(fbm2(1.7, 2.3, -1)).toBe(0);
+        assert.strictEqual(fbm2(1.7, 2.3, -1), 0);
     });
 
     it('fbm3 returns 0 (not NaN) when octaves is 0', () => {
         seedNoise(42);
-        expect(fbm3(1.7, 2.3, 3.1, 0)).toBe(0);
+        assert.strictEqual(fbm3(1.7, 2.3, 3.1, 0), 0);
     });
 
     it('fillField2 with octaves=0 fills 0, not NaN', () => {
@@ -92,8 +93,8 @@ describe('lite-noise: fbm', () => {
         const out = new Float32Array(16);
         fillField2(out, 4, 4, { octaves: 0 });
         for (let i = 0; i < out.length; i++) {
-            expect(out[i]).toBe(0);
-            expect(Number.isNaN(out[i])).toBe(false);
+            assert.strictEqual(out[i], 0);
+            assert.ok(!Number.isNaN(out[i]));
         }
     });
 });
@@ -103,25 +104,24 @@ describe('lite-noise: curl2 / curl3 / warp2', () => {
         seedNoise(42);
         const out = { x: 0, y: 0 };
         const result = curl2(1, 1, out);
-        expect(result).toBe(out);
-        expect(out.x).not.toBe(0);
-        expect(out.y).not.toBe(0);
+        assert.strictEqual(result, out);
+        assert.notStrictEqual(out.x, 0);
+        assert.notStrictEqual(out.y, 0);
     });
 
     it('curl3 writes into caller-owned output', () => {
         seedNoise(42);
         const out = { x: 0, y: 0, z: 0 };
         const result = curl3(1, 1, 1, out);
-        expect(result).toBe(out);
+        assert.strictEqual(result, out);
         // At least one component should have moved off zero for a
         // generic non-singular point.
-        expect(Math.abs(out.x) + Math.abs(out.y) + Math.abs(out.z))
-            .toBeGreaterThan(0);
+        assert.ok(Math.abs(out.x) + Math.abs(out.y) + Math.abs(out.z) > 0);
     });
 
     it('curl3 is (approximately) divergence-free', () => {
         // Central-difference the returned vector field itself.
-        // ∇·curl(ψ) should be ≈ 0 by identity, up to finite-precision noise.
+        // div(curl(psi)) should be ~0 by identity, up to finite-precision noise.
         seedNoise(7);
         const e = 0.001;
         const a = { x: 0, y: 0, z: 0 };
@@ -140,18 +140,18 @@ describe('lite-noise: curl2 / curl3 / warp2', () => {
         // The central-difference on the *output* uses a different eps than
         // the internal curl3 eps (1e-4), so we expect small numerical
         // residual but well under 1.0.
-        expect(total / 20).toBeLessThan(1.0);
+        assert.ok(total / 20 < 1.0, `mean divergence too high: ${total / 20}`);
     });
 
     it('warp2 writes into caller-owned output', () => {
         seedNoise(42);
         const out = { x: 0, y: 0 };
         const result = warp2(3, 5, 0.5, out);
-        expect(result).toBe(out);
+        assert.strictEqual(result, out);
         // At zero strength the output must equal the input exactly.
         warp2(3, 5, 0, out);
-        expect(out.x).toBe(3);
-        expect(out.y).toBe(5);
+        assert.strictEqual(out.x, 3);
+        assert.strictEqual(out.y, 5);
     });
 });
 
@@ -161,10 +161,10 @@ describe('lite-noise: fillField2', () => {
         const w = 64, h = 32;
         const out = new Float32Array(w * h);
         const result = fillField2(out, w, h, { scale: 0.01 });
-        expect(result).toBe(out);
+        assert.strictEqual(result, out);
         for (let i = 0; i < out.length; i++) {
-            expect(out[i]).toBeGreaterThanOrEqual(-1.1);
-            expect(out[i]).toBeLessThanOrEqual(1.1);
+            assert.ok(out[i] >= -1.1, `field below range: ${out[i]}`);
+            assert.ok(out[i] <= 1.1, `field above range: ${out[i]}`);
         }
     });
 
@@ -172,14 +172,14 @@ describe('lite-noise: fillField2', () => {
         seedNoise(42);
         const out = new Float32Array(16);
         const result = fillField2(out, 4, 4);
-        expect(result).toBe(out);
+        assert.strictEqual(result, out);
         // Field should have some non-zero variation with defaults.
         let variance = 0;
         for (let i = 1; i < out.length; i++) variance += Math.abs(out[i] - out[0]);
-        expect(variance).toBeGreaterThan(0);
+        assert.ok(variance > 0);
     });
 
-    it('golden: seed 42 → hash of a 256×256 default field is stable', () => {
+    it('golden: seed 42 -> hash of a 256x256 default field is stable', () => {
         // This is the drift-catch test. If it fails, either the RNG
         // provenance changed, the simplex kernel changed, or FBM's
         // reduction changed. All of those are breaking.
@@ -189,12 +189,12 @@ describe('lite-noise: fillField2', () => {
         fillField2(out, w, h, { scale: 0.01 });
         const bytes = new Uint8Array(out.buffer, out.byteOffset, out.byteLength);
         const hash = fnv1a(bytes);
-        // Committed golden — updating this line requires an explicit
+        // Committed golden -- updating this line requires an explicit
         // ecosystem-facing changelog entry.
-        expect(hash.toString(16)).toBe(GOLDEN_FIELD_HASH);
+        assert.strictEqual(hash.toString(16), GOLDEN_FIELD_HASH);
     });
 
-    it('golden: seed 42 → hash of warp2+fbm2 field is stable', () => {
+    it('golden: seed 42 -> hash of warp2+fbm2 field is stable', () => {
         seedNoise(42);
         const w = 128, h = 128;
         const out = new Float32Array(w * h);
@@ -208,10 +208,10 @@ describe('lite-noise: fillField2', () => {
         }
         const bytes = new Uint8Array(out.buffer, out.byteOffset, out.byteLength);
         const hash = fnv1a(bytes);
-        expect(hash.toString(16)).toBe(GOLDEN_WARP_HASH);
+        assert.strictEqual(hash.toString(16), GOLDEN_WARP_HASH);
     });
 
-    it('golden: seed 42 → hash of a curl3 slab is stable', () => {
+    it('golden: seed 42 -> hash of a curl3 slab is stable', () => {
         seedNoise(42);
         const w = 32, h = 32, d = 8;
         // Pack x,y,z components consecutively.
@@ -230,11 +230,11 @@ describe('lite-noise: fillField2', () => {
         }
         const bytes = new Uint8Array(out.buffer, out.byteOffset, out.byteLength);
         const hash = fnv1a(bytes);
-        expect(hash.toString(16)).toBe(GOLDEN_CURL3_HASH);
+        assert.strictEqual(hash.toString(16), GOLDEN_CURL3_HASH);
     });
 });
 
-// ── Golden hashes ──────────────────────────────────────────────────────
+// -- Golden hashes --------------------------------------------------------
 // These are populated by the first passing run against a known-good build
 // (see scripts/regenerate-goldens.mjs).
 //
