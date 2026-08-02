@@ -2,9 +2,9 @@
 
 All notable changes to `@zakkster/lite-noise`.
 
-## [Unreleased] — 1.2.0 candidate
+## [1.2.0] — 2026-08-02
 
-Two sessions, releasing together as the next minor: **N0** brought the package to the ecosystem's house law with **zero runtime dependencies**; **N1** added the instance API that fixes the shared-seed correctness bug (NS-01). The determinism goldens (`ddef5970` / `ca4f9f1e` / `1ac7a518`) are **unchanged throughout** — every change is behavior-neutral for existing callers, which is what keeps N1 a minor rather than a major.
+Two sessions, releasing together as this minor: **N0** brought the package to the ecosystem's house law with **zero runtime dependencies**; **N1** added the instance API that fixes the shared-seed correctness bug (NS-01). The determinism goldens (`ddef5970` / `ca4f9f1e` / `1ac7a518`) are **unchanged throughout** — every change is behavior-neutral for existing callers, which is what keeps N1 a minor rather than a major.
 
 ### Added
 

@@ -23,14 +23,14 @@
  */
 
 import { createNoise, Noise, seedNoise, simplex2, simplex3, fbm2, fbm3, curl2, curl3, warp2, fillField2 } from '../../Noise.js';
-import { runOpsGate, BREAK, check, die, arrayBufferBytes, forceGc } from './harness.mjs';
+import { runOpsGate, bakeAlloc, BREAK, check, die, arrayBufferBytes, forceGc } from './harness.mjs';
 
 const OPS = 50000;
 const WARMUP = 2000;
-// fillField2 bakes 64*64 = 4096 samples per op. A per-op byte budget needs
-// enough ops to amortize the measurement's fixed overhead below the 2 B/op
-// floor -- 200 ops leaves ~2.8 B/op of pure sampling noise. 1500 ops settles it.
-const BAKE_OPS = 1500;
+// fillField2 bakes 64*64 = 4096 samples per op. A per-op byte budget is pure
+// noise at that op size (see harness.bakeAlloc), so bakes are gated on major
+// GCs + arrayBuffers instead of bytesPerOp.
+const BAKE_OPS = 2000;
 const BAKE_WARMUP = 100;
 
 /** Retained sink for the BREAK control -- survives GC so bytesPerOp climbs. */
@@ -45,6 +45,17 @@ function gate(name, fn, ops, warmup) {
             ' source=' + summary.source +
             (BREAK ? ' [NOISE_TORTURE_BREAK control -- expected]' : ''));
     }
+}
+
+/** Gate a heavy bake on major-GC and arrayBuffers rather than the noisy byte budget. */
+function bakeGate(name, fn) {
+    const { major, abDelta } = bakeAlloc(fn, { ops: BAKE_OPS, warmup: BAKE_WARMUP });
+    check(major === 0,
+        () => `T6 ${name}: ${major} major GC(s) over ${BAKE_OPS} bakes -- retained per-bake allocation`);
+    // Forced-GC on both sides, so anything left is a genuinely retained buffer.
+    // 64 KB tolerance covers measureOps' own sample bookkeeping.
+    check(abDelta < 64 * 1024,
+        () => `T6 ${name}: arrayBuffers grew ${abDelta} B across ${BAKE_OPS} bakes -- retained buffer allocation`);
 }
 
 export function run() {
@@ -67,8 +78,8 @@ export function run() {
     gate('module.curl2', (i) => { curl2(i * 0.017, i * 0.023, v2); }, OPS, WARMUP);
     gate('module.curl3', (i) => { curl3(i * 0.017, i * 0.023, i * 0.011, v3); }, OPS, WARMUP);
     gate('module.warp2', (i) => { warp2(i * 0.017, i * 0.023, 1.5, v2); }, OPS, WARMUP);
-    gate('module.fillField2(opts)', () => { fillField2(field, 64, 64, FIELD_OPTS); }, BAKE_OPS, BAKE_WARMUP);
-    gate('module.fillField2(no-opts)', () => { fillField2(field, 64, 64); }, BAKE_OPS, BAKE_WARMUP);
+    bakeGate('module.fillField2(opts)', () => { fillField2(field, 64, 64, FIELD_OPTS); });
+    bakeGate('module.fillField2(no-opts)', () => { fillField2(field, 64, 64); });
 
     // --- Instance surface (must match the module's cost) ----------------------
     gate('instance.simplex2', (i) => { n.simplex2(i * 0.017, i * 0.023); }, OPS, WARMUP);
@@ -78,7 +89,7 @@ export function run() {
     gate('instance.curl2', (i) => { n.curl2(i * 0.017, i * 0.023, v2); }, OPS, WARMUP);
     gate('instance.curl3', (i) => { n.curl3(i * 0.017, i * 0.023, i * 0.011, v3); }, OPS, WARMUP);
     gate('instance.warp2', (i) => { n.warp2(i * 0.017, i * 0.023, 1.5, v2); }, OPS, WARMUP);
-    gate('instance.fillField2', () => { n.fillField2(field, 64, 64, FIELD_OPTS); }, BAKE_OPS, BAKE_WARMUP);
+    bakeGate('instance.fillField2', () => { n.fillField2(field, 64, 64, FIELD_OPTS); });
 
     // --- Construction allocates exactly one table -----------------------------
     // Warm the constructor so class/shape feedback is settled, then measure the

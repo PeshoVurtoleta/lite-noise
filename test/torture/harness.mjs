@@ -92,6 +92,33 @@ export function runOpsGate(fn, opts) {
     return { report: checkOps(res, RULES), summary: res.summary };
 }
 
+/**
+ * Gate a HEAVY op (e.g. a `fillField2` bake, thousands of samples/op) on the
+ * signals that survive its size. A per-op BYTE budget is meaningless here: the
+ * VM's measurement noise runs 0-5 B/op with zero allocation, and V8 scalar-
+ * replaces small transient objects anyway, so the byte metric can't tell a
+ * clean bake from a `opts = opts || {}` regression. The signals that DO survive:
+ *   - zero major GCs across the window (a retained/escaping per-bake allocation
+ *     accumulates and eventually majors), and
+ *   - flat ArrayBuffer bytes around the window, forced-GC on both sides (a
+ *     retained typed array can't be optimised away and shows here).
+ * Returns { major, abDelta } for the caller to assert with context.
+ *
+ * @param {(i:number)=>void} fn
+ * @param {{ops:number, warmup?:number}} opts
+ */
+export function bakeAlloc(fn, opts) {
+    forceGc();
+    const abBefore = arrayBufferBytes();
+    const res = measureOps(fn, {
+        ops: opts.ops,
+        warmup: opts.warmup === undefined ? 0 : opts.warmup,
+        stabilize: true,
+    });
+    forceGc();
+    return { major: res.summary.gc.major, abDelta: arrayBufferBytes() - abBefore };
+}
+
 /** FNV-1a 32-bit over a TypedArray's raw bytes -- a field fingerprint. */
 export function fnv1a(arr) {
     const bytes = new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);

@@ -13,7 +13,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { createNoise } from '../../Noise.js';
-import { runOpsGate, die, fnv1a } from './harness.mjs';
+import { runOpsGate, bakeAlloc, die, fnv1a } from './harness.mjs';
 
 const NOISE_URL = new URL('../../Noise.js', import.meta.url).href;
 
@@ -53,6 +53,20 @@ export function run() {
         if (s1.simplex2(1.5, 2.5) === s2.simplex2(1.5, 2.5)) {
             die('T9.C3: two different seeds returned the same simplex2 -- differential is vacuous');
         }
+    }
+
+    // Control 3b -- the bake gate. bakeAlloc must flag a bake body that RETAINS
+    // a typed array each call (arrayBuffers grows) -- otherwise T6's fillField2
+    // gate proves nothing. A clean bake leaves arrayBuffers flat; this one keeps
+    // a fresh Float32Array per op in a live sink.
+    {
+        const sink = [];
+        const { major, abDelta } = bakeAlloc(() => { sink.push(new Float32Array(64 * 64)); }, { ops: 400, warmup: 20 });
+        if (abDelta < 64 * 1024 && major === 0) {
+            die('T9.C3b: a bake retaining a Float32Array/op passed the bake gate ' +
+                `(major=${major}, abDelta=${abDelta}) -- the fillField2 gate cannot fail`);
+        }
+        sink.length = 0;
     }
 
     // Control 4 -- the seedNoise dev warning. It must FIRE in a dev process and
