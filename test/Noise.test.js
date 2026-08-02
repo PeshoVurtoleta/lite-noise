@@ -7,6 +7,7 @@ import {
     curl2, curl3,
     warp2,
     fillField2,
+    createNoise, Noise,
 } from '../Noise.js';
 
 // FNV-1a 32-bit over a Float32Array's raw bytes. Small, dependency-free,
@@ -231,6 +232,67 @@ describe('lite-noise: fillField2', () => {
         const bytes = new Uint8Array(out.buffer, out.byteOffset, out.byteLength);
         const hash = fnv1a(bytes);
         assert.strictEqual(hash.toString(16), GOLDEN_CURL3_HASH);
+    });
+});
+
+describe('lite-noise: instance API (createNoise / Noise)', () => {
+    it('createNoise returns a Noise instance', () => {
+        const n = createNoise(0);
+        assert.ok(n instanceof Noise);
+    });
+
+    it('exposes every sampler as a method', () => {
+        const n = createNoise(1);
+        for (const m of ['simplex2', 'simplex3', 'fbm2', 'fbm3', 'curl2', 'curl3', 'warp2', 'fillField2', 'seed']) {
+            assert.strictEqual(typeof n[m], 'function', `missing method: ${m}`);
+        }
+    });
+
+    it('instance at seed S is byte-identical to the module after seedNoise(S)', () => {
+        seedNoise(42);
+        const n = createNoise(42);
+        for (let i = 0; i < 2000; i++) {
+            const x = i * 0.13, y = i * 0.07, z = i * 0.05;
+            assert.strictEqual(n.simplex2(x, y), simplex2(x, y));
+            assert.strictEqual(n.simplex3(x, y, z), simplex3(x, y, z));
+            assert.strictEqual(n.fbm2(x, y), fbm2(x, y));
+        }
+    });
+
+    it('two instances with different seeds are independent', () => {
+        const a = createNoise(1);
+        const before = a.simplex2(1.5, 2.5);
+        // Create, sample, and reseed another instance; A must not budge.
+        const b = createNoise(999);
+        for (let i = 0; i < 500; i++) b.simplex2(i * 0.1, i * 0.2);
+        b.seed(12345);
+        assert.strictEqual(a.simplex2(1.5, 2.5), before);
+    });
+
+    it('an instance is immune to seedNoise on the shared module table', () => {
+        const n = createNoise(42);
+        const before = n.simplex2(1.5, 2.5);
+        seedNoise(7); // the NS-01 action, on the module -- must not touch the instance
+        assert.strictEqual(n.simplex2(1.5, 2.5), before);
+    });
+
+    it('.seed(s) reseeds in place and equals a fresh createNoise(s)', () => {
+        const reused = createNoise(3);
+        assert.strictEqual(reused.seed(8), reused, '.seed returns this');
+        const fresh = createNoise(8);
+        for (let i = 0; i < 1000; i++) {
+            const x = i * 0.11, y = i * 0.09;
+            assert.strictEqual(reused.simplex2(x, y), fresh.simplex2(x, y));
+        }
+    });
+
+    it('golden: instance seed 42 -> 256x256 field hashes to GOLDEN_FIELD_HASH', () => {
+        const n = createNoise(42);
+        const w = 256, h = 256;
+        const out = new Float32Array(w * h);
+        n.fillField2(out, w, h, { scale: 0.01 });
+        const bytes = new Uint8Array(out.buffer, out.byteOffset, out.byteLength);
+        assert.strictEqual(fnv1a(bytes).toString(16), GOLDEN_FIELD_HASH);
     });
 });
 

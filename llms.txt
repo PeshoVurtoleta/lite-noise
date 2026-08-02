@@ -1,14 +1,15 @@
-# @zakkster/lite-noise v1.1.0
+# @zakkster/lite-noise v1.2.0
 
 > Zero-GC seeded Simplex 2D/3D noise, unrolled FBM, curl2, curl3,
 > Quilez-style domain warp, and bakeable heightfields. Deterministic.
-> Single-file ESM, ~1.5 KB min+gz, zero runtime dependencies.
+> Single-file ESM, ~1.98 KB min+gz, zero runtime dependencies.
 
 ## Install
 npm i @zakkster/lite-noise
 
 ## Import
 import {
+    createNoise, Noise,
     seedNoise,
     simplex2, simplex3,
     fbm2, fbm3,
@@ -19,9 +20,23 @@ import {
 
 ## API
 
+- createNoise(seed = 0): Noise
+    An independent noise field owning its own 512-byte permutation table. Two
+    instances are two independent fields; sampling/seeding/constructing one
+    never changes another. Use this to run two consumers on one page.
+- new Noise(seed = 0)
+    The class behind createNoise; exported for instanceof / typing.
+- noise.seed(seed): this
+    Re-seed an instance in place. Affects only that instance.
+- noise.simplex2/simplex3/fbm2/fbm3/curl2/curl3/warp2/fillField2
+    Instance methods mirroring the module functions below. An instance at seed S
+    is byte-identical to the module functions after seedNoise(S).
+
 - seedNoise(seed = 0): void
-    Rebuilds internal permutation table. Auto-seeded with 0 on module load.
-    Setup cost (one Uint8Array + one Random); not on any hot path.
+    Rebuilds the SHARED module permutation table. Auto-seeded with 0 on module
+    load. Setup cost (fills one Uint8Array in place); not on any hot path. Warns
+    once in dev builds if called more than once (silent when NODE_ENV=production);
+    for independent fields use createNoise instead.
 
 - simplex2(x, y): number in ~[-1, 1]
 - simplex3(x, y, z): number in ~[-1, 1]
@@ -68,21 +83,28 @@ import {
   (which would allocate).
 - Auto-seeded with 0 on module load; explicit seedNoise(n) is idempotent.
 
-## Shared module state (important)
+## Two consumers: use createNoise (important)
 
-The internal permutation table is module-scoped. All consumers importing
-this module share it. `seedNoise(n)` mutates the SAME table:
+The module functions share ONE module-scoped permutation table. `seedNoise(n)`
+mutates the SAME table every module-level consumer reads:
 
     // terrain
     seedNoise(42); simplex2(x, y);   // seed-42 table
     // particles (elsewhere)
-    seedNoise(7);  simplex2(x, y);   // ← everyone now on seed-7
+    seedNoise(7);  simplex2(x, y);   // everyone now on seed-7
     // terrain
-    simplex2(x, y);                  // ← silently changed
+    simplex2(x, y);                  // silently changed
 
-For a single-consumer app this is invisible. For two subsystems each
-wanting their own seed stream, either reseed before every batch (from a
-saved seed value) or wait for `createNoise` in v1.2.0.
+For a single-consumer app this is invisible. For two subsystems each wanting
+their own seed stream, give each its own instance -- they cannot collide:
+
+    const terrain   = createNoise(42);
+    const particles = createNoise(7);
+    terrain.simplex2(x, y);          // unaffected by anything particles does
+    particles.seed(99);              // touches only particles
+
+An instance at seed S is byte-identical to the module functions after
+seedNoise(S). seedNoise warns once (dev builds) if called more than once.
 
 ## Degenerate inputs
 
@@ -124,10 +146,10 @@ that hides under the byte-budget noise. A real leak crosses both bars.
 
 ## Bundle budget
 
-~1.5 KB minified + gzipped (1,518 B), self-contained with zero runtime
+~1.98 KB minified + gzipped (1,975 B), self-contained with zero runtime
 dependencies, enforced via `npm run bundle-check` (esbuild --minify,
-nothing externalised). New variants must share the octave skeleton or
-they don't ship.
+nothing externalised; ceiling 2,048 B). New variants must share the octave
+skeleton or they don't ship.
 
 ## Usage sketches
 

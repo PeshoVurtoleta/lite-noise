@@ -1,24 +1,56 @@
 /**
- * @zakkster/lite-noise v1.1.0 — Zero-GC seeded Simplex + FBM + curl + warp.
+ * @zakkster/lite-noise v1.2.0 — Zero-GC seeded Simplex + FBM + curl + warp.
  *
- * Shared module state: the internal permutation table is module-scoped and
- * mutated by `seedNoise`. All consumers importing this module share it.
- * See `seedNoise` doc for guidance. A factory returning an isolated instance
- * is planned for v1.2.0.
+ * Two ways to sample:
+ *   - `createNoise(seed)` returns a `Noise` instance owning its OWN permutation
+ *     table. Two instances are two independent fields; use this to run two
+ *     consumers on one page without collision.
+ *   - The module-level functions share ONE table, re-seeded by `seedNoise`.
+ *     Convenient for a single consumer; a second consumer that calls `seedNoise`
+ *     re-randomises the field the first is reading.
+ *
+ * Zero runtime dependencies.
  */
 
 /**
- * Rebuild the internal permutation table from `seed`. Call once, or re-seed.
+ * Rebuild the SHARED module permutation table from `seed`. Call once, or
+ * re-seed.
  *
  * ⚠️ Shared module state: this mutates a single module-scoped table. Every
- * consumer importing this module reseeds the SAME table. If two subsystems
- * (e.g. terrain + particles) need independent seed streams, either arrange
- * for one of them to reseed before every batch (from a saved seed value),
- * or wait for `createNoise` in v1.2.0.
+ * consumer importing the module functions reseeds the SAME table. For two
+ * subsystems that need independent seed streams (e.g. terrain + particles),
+ * give each its own `createNoise(seed)` instead. Called more than once, this
+ * warns once in dev builds (silent when `NODE_ENV === 'production'`).
  *
  * Setup cost only — not on any hot path. Auto-seeded with 0 on module load.
  */
 export declare function seedNoise(seed?: number): void;
+
+/**
+ * An independent noise field owning its own permutation table. Construct via
+ * `createNoise`. Sampling, seeding, or constructing one instance never changes
+ * another. Every method mirrors the same-named module function.
+ */
+export declare class Noise {
+    constructor(seed?: number);
+    /** Re-seed this instance in place. Affects only this instance. Returns `this`. */
+    seed(seed: number): this;
+    simplex2(x: number, y: number): number;
+    simplex3(x: number, y: number, z: number): number;
+    fbm2(x: number, y: number, octaves?: number, lacunarity?: number, gain?: number): number;
+    fbm3(x: number, y: number, z: number, octaves?: number, lacunarity?: number, gain?: number): number;
+    curl2(x: number, y: number, out: Vec2): Vec2;
+    curl3(x: number, y: number, z: number, out: Vec3): Vec3;
+    warp2(x: number, y: number, strength: number, out: Vec2): Vec2;
+    fillField2<T extends Float32Array | Float64Array>(out: T, w: number, h: number, opts?: FillField2Options): T;
+}
+
+/**
+ * Create an independent noise instance owning its own permutation table.
+ * The way to give two consumers on one page fields that cannot disturb
+ * each other.
+ */
+export declare function createNoise(seed?: number): Noise;
 
 /**
  * 2D Simplex noise. Approximately in [-1, 1].

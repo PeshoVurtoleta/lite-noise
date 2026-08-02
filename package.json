@@ -1,6 +1,6 @@
 {
   "name": "@zakkster/lite-noise",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Zero-GC seeded Simplex 2D/3D noise, unrolled FBM, curl2, curl3, domain warp, and bakeable heightfields. Deterministic via seeded permutation table.",
   "author": "Zahary Shinikchiev <shinikchiev@yahoo.com>",
   "license": "MIT",
@@ -53,16 +53,16 @@
     "url": "https://github.com/sponsors/PeshoVurtoleta"
   },
   "devDependencies": {
-    "@zakkster/lite-gc-profiler": "^1.7.0",
+    "@zakkster/lite-gc-profiler": "^1.14.1",
     "esbuild": "^0.25.0"
   },
   "scripts": {
-    "test": "node --test \"test/**/*.test.js\"",
-    "test:gc": "node magnitudes/scripts/test-gc.mjs",
+    "test": "node --expose-gc --test \"test/**/*.test.js\"",
+    "torture": "node --expose-gc test/torture.mjs",
     "bench": "node magnitudes/bench/terrain.mjs",
     "bundle-check": "node magnitudes/scripts/bundle-check.mjs",
     "goldens": "node magnitudes/scripts/regenerate-goldens.mjs",
-    "verify": "npm run test && npm run test:gc && npm run bundle-check",
+    "verify": "npm test && npm run torture && npm run bundle-check",
     "prepublishOnly": "npm run verify"
   }
 }

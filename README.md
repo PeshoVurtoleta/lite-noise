@@ -27,7 +27,7 @@ It gives you:
 - 0️⃣ Zero allocation in any hot-path function (unrolled FBM, no rest/spread, no per-cell object synthesis)
 - 🧹 Caller-owned output for `curl2` / `curl3` / `warp2` (no shared reference bugs)
 - 🛡️ Zero-alloc claim made falsifiable via `@zakkster/lite-gc-profiler` gates (`npm run test:gc`)
-- 🪶 ~1.52 KB minified + gzipped, self-contained (zero dependencies; measured by `npm run bundle-check`)
+- 🪶 ~1.98 KB minified + gzipped, self-contained (zero dependencies; measured by `npm run bundle-check`)
 
 Part of the [@zakkster/lite-*](https://www.npmjs.com/org/zakkster) ecosystem — micro-libraries built for deterministic, cache-friendly game development.
 
@@ -72,9 +72,27 @@ particle.vx += vel.x * 0.5;
 particle.vy += vel.y * 0.5;
 ```
 
-## ⚠️ Shared module state
+## 🧭 Two consumers? Use `createNoise`
 
-`lite-noise` keeps one internal permutation table at module scope. Every consumer that imports this module reads from — and, via `seedNoise`, writes to — the same table.
+There are two ways to sample, and the difference is ownership of the permutation table.
+
+**`createNoise(seed)` — an independent field.** Each instance owns its own table. Two instances are two fields that cannot disturb each other, which is what you want the moment more than one subsystem samples noise on the same page.
+
+```javascript
+import { createNoise } from '@zakkster/lite-noise';
+
+const terrain   = createNoise(42);   // its own table
+const particles = createNoise(7);    // a different, independent table
+
+terrain.fillField2(field, w, h, { scale: 0.01, octaves: 6 });
+particles.curl2(x * 0.005, y * 0.005, vel);
+// Neither call can change what the other samples. Reseed one with
+// `particles.seed(99)` and `terrain` is untouched.
+```
+
+Every module function has an instance method of the same name: `simplex2`, `simplex3`, `fbm2`, `fbm3`, `curl2`, `curl3`, `warp2`, `fillField2`, plus `.seed(s)` to re-seed in place. An instance at seed `S` is byte-identical to the module functions after `seedNoise(S)` — same values, isolated ownership.
+
+**The module functions — one shared table.** Convenient for a single consumer, but they share one module-scoped table that `seedNoise` rewrites for *everyone*:
 
 ```javascript
 // terrain module
@@ -89,7 +107,7 @@ const p = simplex2(px, py);       // seed-7 table
 const h2 = simplex2(x, y);        // ← this changed silently
 ```
 
-If two subsystems need independent seed streams, either arrange for one to reseed before every batch (from a saved seed value), or wait for `createNoise` in v1.2.0. Under a single seed and single consumer this is invisible; the moment two consumers each own a "their" seed, it isn't.
+Under a single seed and single consumer this is invisible; the moment two consumers each own "their" seed, it isn't. `seedNoise` warns once (dev builds) when called more than once, naming `createNoise` as the fix. When in doubt, give each consumer its own `createNoise(seed)`.
 
 ## 📊 Comparison
 
@@ -97,11 +115,20 @@ If two subsystems need independent seed streams, either arrange for one to resee
 |-----------------|--------------:|:-------:|:-------:|:-------:|:-------:|:-------:|:----------:|:-------:|--------------------------------------|
 | simplex-noise   | ~8 KB         | No      | No      | No      | No      | No      | No         | No      | `npm i simplex-noise`                |
 | noisejs         | ~4 KB         | Yes     | No      | No      | No      | No      | No         | No      | `npm i noisejs`                      |
-| **lite-noise**  | **~1.52 KB**† | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes**    | **Yes** | `npm i @zakkster/lite-noise`         |
+| **lite-noise**  | **~1.98 KB**† | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes**    | **Yes** | `npm i @zakkster/lite-noise`         |
 
-† lite-noise's figure is minified **+ gzipped**, self-contained — the full installed footprint with **zero runtime dependencies** (1,518 B, `npm run bundle-check`). The other libraries' sizes are their published bundle sizes as listed on npm.
+† lite-noise's figure is minified **+ gzipped**, self-contained — the full installed footprint with **zero runtime dependencies** (1,975 B, `npm run bundle-check`). The other libraries' sizes are their published bundle sizes as listed on npm.
 
 ## ⚙️ API
+
+Every sampler below exists twice: as a module function sharing one table, and as a method on a `Noise` instance owning its own table. Same signatures, same values at the same seed.
+
+### Instance / factory
+
+- `createNoise(seed?) → Noise` — an independent noise field owning its own permutation table. The way to run two consumers without collision.
+- `new Noise(seed?)` — the class behind `createNoise`, exported for `instanceof` / typing.
+- `noise.seed(seed) → this` — re-seed an instance in place; affects only that instance.
+- `noise.simplex2 / simplex3 / fbm2 / fbm3 / curl2 / curl3 / warp2 / fillField2` — instance methods mirroring the module functions below.
 
 ### Scalar samplers
 
@@ -122,7 +149,7 @@ If two subsystems need independent seed streams, either arrange for one to resee
 
 ### Seed
 
-- `seedNoise(seed?)` — build the internal permutation table. Call once, or call again to re-seed. Auto-seeded with `0` on module load.
+- `seedNoise(seed?)` — build the **shared** module permutation table. Call once, or call again to re-seed. Auto-seeded with `0` on module load. Warns once in dev builds if called more than once (silent under `NODE_ENV === 'production'`); for independent fields use `createNoise` instead.
 
 ## 🛡️ Zero-GC — falsifiable, not asserted
 

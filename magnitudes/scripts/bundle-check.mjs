@@ -15,7 +15,11 @@ import { build } from 'esbuild';
 import { gzipSync } from 'node:zlib';
 import { readFileSync, unlinkSync } from 'node:fs';
 
-const CEILING = 1550;                  // bytes, min+gz — self-contained, zero deps
+const CEILING = 2048;                  // bytes, min+gz — self-contained, zero deps.
+// Rose from 1550 with the v1.2.0 instance API (createNoise / Noise class + the
+// dual module surface). Module functions stay explicit delegators, not bound
+// methods off a default instance, so a `simplex2`-only import still tree-shakes
+// the class away -- worth the bytes. Measured 1,975 B; ~2 KiB is the new bound.
 const OUT = 'test-bundle.js';
 
 await build({

@@ -2,24 +2,29 @@
 
 All notable changes to `@zakkster/lite-noise`.
 
-## [Unreleased]
+## [Unreleased] — 1.2.0 candidate
 
-N0 hygiene pass — the package brought fully to the ecosystem's house law, and now **zero runtime dependencies**. No API, kernel, or seeding-*value* change; determinism goldens (`ddef5970` / `ca4f9f1e` / `1ac7a518`) unchanged, proving every change here is behavior-neutral.
-
-### Removed
-
-- **`@zakkster/lite-random` runtime dependency (NS-05).** It was used in exactly one place — `seedNoise`'s Fisher-Yates shuffle. Its six-line Mulberry32 core is now inlined as `_rngNext` in `Noise.js`, reproducing the previous `new Random(seed).next()` sequence byte-for-byte (the goldens are the proof). This reclaims the zero-dependency badge, makes the size claim reflect the true self-contained install, and removes the version-skew hazard (the old `^1.0.0` pin against lite-random's 1.1.0 could resolve a second copy alongside `lite-particles`'s `^1.1.0`). Decision recorded in `decisions/0001-lite-random.md`.
-
-### Changed
-
-- **Test runner: vitest -> `node --test`.** `test/Noise.test.js` ported from `describe/it/expect` to `node:test` + `node:assert/strict` — all 19 cases, same assertions. `vitest` removed as a `devDependency`; `vitest.config.mjs` deleted. `test` script is now `node --test "test/**/*.test.js"`. The house law is `node:test` only; lite-noise was the last vitest holdout.
-- **Size claim now measures the self-contained install.** Previously "< 1.5 KB" was own-code with `@zakkster/lite-random` externalised (1,472 B min+gz) — true for own code, but the installed footprint with the dependency was ~1.9 KB. With the dependency inlined the package is self-contained: **1,518 B min+gz**, stated across README / llms.txt as "~1.52 KB, zero dependencies". `bundle-check` no longer externalises anything and its ceiling is 1,550 B.
-- **`perlin` keyword removed** from `package.json`. The package implements Simplex noise (`simplex2` / `simplex3`), not classic Perlin gradient noise; there is no `perlin()` export. The keyword advertised an algorithm that does not ship.
+Two sessions, releasing together as the next minor: **N0** brought the package to the ecosystem's house law with **zero runtime dependencies**; **N1** added the instance API that fixes the shared-seed correctness bug (NS-01). The determinism goldens (`ddef5970` / `ca4f9f1e` / `1ac7a518`) are **unchanged throughout** — every change is behavior-neutral for existing callers, which is what keeps N1 a minor rather than a major.
 
 ### Added
 
-- **`verify` script** — `test && test:gc && bundle-check`, matching the ecosystem's script shape. `prepublishOnly` now delegates to it.
+- **`createNoise(seed)` / `Noise` / `noise.seed(s)` — instance-scoped noise (NS-01).** `createNoise` returns a `Noise` instance owning its own 512-byte permutation table. Two instances are two independent fields: sampling, seeding, or constructing one never changes another. Every module function has an instance method of the same name (`simplex2`, `simplex3`, `fbm2`, `fbm3`, `curl2`, `curl3`, `warp2`, `fillField2`), plus `.seed(s)` to re-seed in place. An instance at seed `S` is byte-identical to the module functions after `seedNoise(S)`. Before this, every consumer on a page shared one module-global table and the last to call `seedNoise` silently re-randomised the others — the bug that would surface first in a multi-consumer demo. The `Noise` class is exported for `instanceof` / typing.
+- **`seedNoise` warns once (dev builds) when called more than once**, naming `createNoise` as the fix. Silent under `NODE_ENV === 'production'`. Turns the silent shared-table collision into a visible one.
+- **Torture harness** — `test/torture.mjs` + `test/torture/{harness,t0-laws,t5-fuzz,t6-alloc,t9-controls}.mjs`, run via `npm run torture` (`node --expose-gc test/torture.mjs`, prints `ok` / exit 0). T0 metamorphic laws, T5 the NS-01 isolation finding made executable, T6 the zero-alloc gate over both module and instance surfaces plus one-table construction and 4096-cycle retention, T9 controls (every gate proven able to fail; `NOISE_TORTURE_BREAK=1` must exit non-zero). Replaces the single `magnitudes/` gc gate; matches the LiteBvh test layout.
+- **`verify` script** — `test && torture && bundle-check`; `prepublishOnly` delegates to it.
 - **`decisions/0001-lite-random.md`** — ADR recording the NS-05 dependency decision (Accepted: inline).
+
+### Removed
+
+- **`@zakkster/lite-random` runtime dependency (NS-05).** Used in exactly one place — `seedNoise`'s Fisher-Yates shuffle. Its six-line Mulberry32 core is now inlined (in `_seedPerm`), reproducing the previous `new Random(seed).next()` sequence byte-for-byte (the goldens are the proof). Reclaims the zero-dependency badge, makes the size claim reflect the true self-contained install, and removes the version-skew hazard (the old `^1.0.0` pin against lite-random's 1.1.0 could resolve a second copy alongside `lite-particles`'s `^1.1.0`).
+- **`magnitudes/test/gc-gate.test.mjs` + `magnitudes/scripts/test-gc.mjs`** — superseded by T6 in the torture harness.
+
+### Changed
+
+- **Test runner: vitest -> `node --test`.** `test/Noise.test.js` ported to `node:test` + `node:assert/strict` (now 26 cases incl. the instance API). `vitest` removed as a `devDependency`; `vitest.config.mjs` deleted. `test` runs under `--expose-gc`.
+- **Permutation seeding is in place.** `_seedPerm(perm, seed)` fills the 512-entry table directly (identity, Fisher-Yates, mirror) with no transient 256-byte scratch, so a `Noise` construction allocates exactly one buffer. Same output as before (goldens hold).
+- **Size claim tracks the self-contained install through both sessions.** N0 inlined the dependency (1,472 B own-code externalised -> 1,518 B self-contained). N1's instance API (the `Noise` class + dual surface) brings it to **1,975 B min+gz**, stated as "~1.98 KB, zero dependencies" across README / llms.txt. `bundle-check` externalises nothing; ceiling raised 1,550 -> 2,048 B. Module functions stay explicit delegators (not bound methods off a default instance) so a `simplex2`-only import still tree-shakes the `Noise` class away.
+- **`perlin` keyword removed** from `package.json`. The package implements Simplex noise, not classic Perlin gradient noise; there is no `perlin()` export.
 
 ## [1.1.0] — 2026-07-19
 
