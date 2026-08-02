@@ -1,8 +1,9 @@
 /**
- * @zakkster/lite-noise v1.2.0
+ * @zakkster/lite-noise v1.3.0
  *
- * Zero-GC seeded Simplex 2D/3D + FBM + curl2 + curl3 + domain warp + bakeable
- * heightfields. Deterministic via a seeded permutation table.
+ * Zero-GC seeded Simplex 2D/3D + FBM + ridged/billow multifractals + seamless
+ * loop + tileable field + curl2 + curl3 + domain warp + bakeable heightfields.
+ * Deterministic via a seeded permutation table.
  *
  * All hot-path functions allocate nothing. Caller-owned `out` for the vector-
  * returning APIs (curl2, curl3, warp2) and for fillField2's Float32Array target.
@@ -37,6 +38,11 @@ const F2 = 0.5 * (Math.sqrt(3) - 1);
 const G2 = (3 - Math.sqrt(3)) / 6;
 const F3 = 1 / 3;
 const G3 = 1 / 6;
+
+// One full turn. noiseLoop reduces its angle modulo TAU so a caller passing
+// exactly TAU lands byte-identically on the angle 0 sample -- the seam closes
+// with `===`, not merely within epsilon.
+const TAU = Math.PI * 2;
 
 function dot2(gi, x, y) { return _grad3[gi] * x + _grad3[gi + 1] * y; }
 function dot3(gi, x, y, z) { return _grad3[gi] * x + _grad3[gi + 1] * y + _grad3[gi + 2] * z; }
@@ -156,20 +162,77 @@ function _simplex3(perm, x, y, z) {
     return 32 * (n0 + n1 + n2 + n3);
 }
 
-function _fbm2(perm, x, y, octaves, lacunarity, gain) {
+// Shared 2D octave accumulator. `mode` selects the per-octave shaping of the
+// raw simplex2 sample -- 0 = fbm (signed pass-through), 1 = ridged, 2 = billow.
+// fbm2/ridged2/billow2 are one-line wrappers over this so the octave skeleton
+// (frequency/amplitude walk, maxAmp normalisation, degenerate-octaves guard)
+// exists once. The mode-0 arithmetic is byte-identical to the previous inlined
+// _fbm2: the skipped branches never touch `s`, so the goldens do not move.
+//
+// Range contract: with `gain >= 0` the weights amplitude/maxAmp are all non-
+// negative and sum to 1, so the result is a convex blend of the per-octave
+// values -- ridged/billow (each octave in [0,1]) stay in [0,1], fbm stays in
+// simplex's ~[-1,1]. A NEGATIVE gain flips the amplitude sign each octave: maxAmp
+// becomes a partly-cancelling alternating sum and the quotient can leave those
+// ranges. gain >= 0 is the documented domain (it is the standard FBM persistence
+// anyway); the `maxAmp ? ... : 0` guard only defends the octaves<=0 / 0-0 case.
+function _octaves2(perm, x, y, octaves, lacunarity, gain, mode) {
     let amplitude = 1.0;
     let frequency = 1.0;
     let total = 0.0;
     let maxAmp = 0.0;
 
     for (let i = 0; i < octaves; i++) {
-        total += _simplex2(perm, x * frequency, y * frequency) * amplitude;
+        let s = _simplex2(perm, x * frequency, y * frequency);
+        if (mode === 1) { s = 1 - (s < 0 ? -s : s); s *= s; }  // ridged: sharp creases at zero-crossings
+        else if (mode === 2) { s = s < 0 ? -s : s; }           // billow: folded, absolute value
+        total += s * amplitude;
         maxAmp += amplitude;
         amplitude *= gain;
         frequency *= lacunarity;
     }
 
     return maxAmp ? total / maxAmp : 0;
+}
+
+function _fbm2(perm, x, y, octaves, lacunarity, gain) {
+    return _octaves2(perm, x, y, octaves, lacunarity, gain, 0);
+}
+
+function _ridged2(perm, x, y, octaves, lacunarity, gain) {
+    return _octaves2(perm, x, y, octaves, lacunarity, gain, 1);
+}
+
+function _billow2(perm, x, y, octaves, lacunarity, gain) {
+    return _octaves2(perm, x, y, octaves, lacunarity, gain, 2);
+}
+
+// Seamless 1D loop: walk a circle of radius `radius` in the 2D field. The value
+// at angle 0 and angle TAU is the SAME lattice sample, so an animation driving
+// t from 0..TAU closes perfectly. `t % TAU` guarantees the exact wrap (see TAU).
+function _noiseLoop(perm, t, radius) {
+    const a = t % TAU;
+    return _simplex2(perm, Math.cos(a) * radius, Math.sin(a) * radius);
+}
+
+// Tileable 2D field over [0, periodX) x [0, periodY). A bilinear blend of the
+// sample and its three period-wrapped neighbours: at every seam the vanishing
+// corner weights make opposite edges evaluate to the identical expression, so
+// the tile is seamless by construction (verified via patternforge.seamlessScore
+// in the suite, not by eye). Four simplex2 samples, zero allocation.
+// Precondition: periodX > 0 and periodY > 0 (a tile has positive extent). A
+// period of 0 divides by 0 and yields a non-finite value (NaN when the numerator
+// also vanishes, +/-Infinity otherwise) -- not guarded on this hot path because a
+// zero tile size is a caller error, not a data-driven value the way fbm2's
+// octaves is; state it as a contract rather than branch every sample.
+function _tileable2(perm, x, y, periodX, periodY) {
+    const wx = periodX - x, hy = periodY - y;
+    const n00 = _simplex2(perm, x, y);
+    const n10 = _simplex2(perm, x - periodX, y);
+    const n01 = _simplex2(perm, x, y - periodY);
+    const n11 = _simplex2(perm, x - periodX, y - periodY);
+    return (n00 * wx * hy + n10 * x * hy + n01 * wx * y + n11 * x * y)
+        / (periodX * periodY);
 }
 
 function _fbm3(perm, x, y, z, octaves, lacunarity, gain) {
@@ -232,6 +295,7 @@ function _fillField2(perm, out, w, h, opts) {
     const gain       = opts?.gain       ?? 0.5;
     const ox         = opts?.ox         ?? 0;
     const oy         = opts?.oy         ?? 0;
+    const normalize  = opts?.normalize  ?? false;
 
     let py = oy;
     let idx = 0;
@@ -243,6 +307,24 @@ function _fillField2(perm, out, w, h, opts) {
         }
         py += scale;
     }
+
+    // Optional second pass to exact [0, 1]. fbm2 is amplitude-normalised but not
+    // full-range (~[-0.84, 0.82] at the defaults), so a colour ramp wants a real
+    // 0..1 remap. Allocation-free: two scalar-tracking passes, no temp buffer. A
+    // constant field (range 0) maps to all-zero rather than dividing by zero.
+    if (normalize) {
+        const n = w * h;
+        let mn = Infinity, mx = -Infinity;
+        for (let i = 0; i < n; i++) {
+            const v = out[i];
+            if (v < mn) mn = v;
+            if (v > mx) mx = v;
+        }
+        const range = mx - mn;
+        const inv = range > 0 ? 1 / range : 0;
+        for (let i = 0; i < n; i++) out[i] = (out[i] - mn) * inv;
+    }
+
     return out;
 }
 
@@ -281,6 +363,14 @@ export class Noise {
     fbm3(x, y, z, octaves = 4, lacunarity = 2.0, gain = 0.5) {
         return _fbm3(this._perm, x, y, z, octaves, lacunarity, gain);
     }
+    ridged2(x, y, octaves = 4, lacunarity = 2.0, gain = 0.5) {
+        return _ridged2(this._perm, x, y, octaves, lacunarity, gain);
+    }
+    billow2(x, y, octaves = 4, lacunarity = 2.0, gain = 0.5) {
+        return _billow2(this._perm, x, y, octaves, lacunarity, gain);
+    }
+    noiseLoop(t, radius = 1.0) { return _noiseLoop(this._perm, t, radius); }
+    tileable2(x, y, periodX, periodY) { return _tileable2(this._perm, x, y, periodX, periodY); }
     curl2(x, y, out) { return _curl2(this._perm, x, y, out); }
     curl3(x, y, z, out) { return _curl3(this._perm, x, y, z, out); }
     warp2(x, y, strength, out) { return _warp2(this._perm, x, y, strength, out); }
@@ -344,19 +434,67 @@ export function simplex3(x, y, z) { return _simplex3(_perm, x, y, z); }
 /**
  * Unrolled 2D FBM -- zero allocation. `octaves` must be >= 1; `octaves = 0` or
  * negative returns 0 (rather than NaN from a `0/0` divide), keeping data-driven
- * biome configs safe.
+ * biome configs safe. `gain` is the per-octave amplitude decay and must be >= 0
+ * (the standard FBM domain, typically 0..1); a negative gain alternates the
+ * amplitude sign and pushes the output past the documented ~[-1, 1] range.
  */
 export function fbm2(x, y, octaves = 4, lacunarity = 2.0, gain = 0.5) {
     return _fbm2(_perm, x, y, octaves, lacunarity, gain);
 }
 
 /**
- * Unrolled 3D FBM -- zero allocation. Same octaves >= 1 contract as fbm2;
- * degenerate cases return 0.
+ * Unrolled 3D FBM -- zero allocation. Same octaves >= 1 and gain >= 0 contract
+ * as fbm2; degenerate cases return 0.
  */
 export function fbm3(x, y, z, octaves = 4, lacunarity = 2.0, gain = 0.5) {
     return _fbm3(_perm, x, y, z, octaves, lacunarity, gain);
 }
+
+/**
+ * Ridged multifractal 2D -- `(1 - |simplex|)^2` per octave over the shared FBM
+ * skeleton. Sharp creases at zero-crossings, distribution skewed toward the high
+ * end: mountains, cracked earth, veins. Same octaves >= 1 contract as fbm2.
+ * Range ~[0, 1] holds for `gain >= 0` (the FBM domain); a negative gain flips the
+ * per-octave amplitude sign and voids the range guarantee -- see fbm2.
+ */
+export function ridged2(x, y, octaves = 4, lacunarity = 2.0, gain = 0.5) {
+    return _ridged2(_perm, x, y, octaves, lacunarity, gain);
+}
+
+/**
+ * Billow 2D -- `|simplex|` per octave over the shared FBM skeleton. Puffy,
+ * folded, absolute-value-symmetric: clouds, rolling hills, smoke bulges. Same
+ * octaves >= 1 contract as fbm2. Range ~[0, 1] holds for `gain >= 0`; a negative
+ * gain voids it (same domain caveat as fbm2/ridged2).
+ */
+export function billow2(x, y, octaves = 4, lacunarity = 2.0, gain = 0.5) {
+    return _billow2(_perm, x, y, octaves, lacunarity, gain);
+}
+
+/**
+ * Seamless periodic 1D noise by sampling a circle of radius `radius` in the 2D
+ * field. Drive `t` from 0 to 2*PI for a perfect loop: `noiseLoop(0)` and
+ * `noiseLoop(2*PI)` are the identical sample (exact `===`, not epsilon-close),
+ * and the derivative matches at the seam. The single most reposted procedural-
+ * animation trick, in one call.
+ * @param {number} t Angle in radians; reduced modulo 2*PI.
+ * @param {number} [radius] Loop radius in noise space (bigger = more variation).
+ * @returns {number} Value in approximately [-1, 1].
+ */
+export function noiseLoop(t, radius = 1.0) { return _noiseLoop(_perm, t, radius); }
+
+/**
+ * Tileable 2D noise over `[0, periodX) x [0, periodY)`. A bilinear blend of the
+ * sample and its three period-wrapped neighbours, seamless at every seam by
+ * construction (opposite edges evaluate to the identical expression). Bake a
+ * field and it tiles without a visible seam. Four simplex2 samples, zero alloc.
+ * @param {number} x In `[0, periodX)`.
+ * @param {number} y In `[0, periodY)`.
+ * @param {number} periodX Tile width in noise space.
+ * @param {number} periodY Tile height in noise space.
+ * @returns {number} Value in approximately [-1, 1] (blend narrows the extremes).
+ */
+export function tileable2(x, y, periodX, periodY) { return _tileable2(_perm, x, y, periodX, periodY); }
 
 /**
  * Curl noise 2D -- divergence-free 2D vector, caller-owned output.
@@ -394,11 +532,18 @@ export function warp2(x, y, strength, out) { return _warp2(_perm, x, y, strength
  * Bake a 2D FBM heightfield into a caller-supplied Float32Array (or any
  * TypedArray with `length >= w * h`). Row-incremental coordinate stepping.
  * Zero allocation once options are read.
+ *
+ * Range: the raw fill is amplitude-normalised but not full-range (fbm2 measures
+ * ~[-0.84, 0.82] at the defaults). Pass `normalize: true` for an exact [0, 1]
+ * remap via a second in-place pass -- what a colour ramp usually wants.
+ *
+ * `out` is caller-owned and written start-to-end; it must not alias `opts` or
+ * any live view you read during the call.
  * @param {Float32Array|Float64Array} out Destination, `length >= w * h`.
  * @param {number} w
  * @param {number} h
  * @param {{ scale?: number, octaves?: number, lacunarity?: number,
- *           gain?: number, ox?: number, oy?: number }} [opts]
+ *           gain?: number, ox?: number, oy?: number, normalize?: boolean }} [opts]
  * @returns {Float32Array|Float64Array} The same `out` reference.
  */
 export function fillField2(out, w, h, opts) { return _fillField2(_perm, out, w, h, opts); }

@@ -3,7 +3,7 @@
 // Run this only when the underlying kernel deliberately changes.
 //   node scripts/regenerate-goldens.mjs
 
-import { seedNoise, fbm2, warp2, curl3, fillField2 } from '../../Noise.js';
+import { seedNoise, fbm2, warp2, curl3, fillField2, createNoise } from '../../Noise.js';
 
 function fnv1a(bytes) {
     let h = 0x811c9dc5;
@@ -60,4 +60,26 @@ seedNoise(42);
     }
     const bytes = new Uint8Array(out.buffer, out.byteOffset, out.byteLength);
     console.log('GOLDEN_CURL3_HASH =', fnv1a(bytes).toString(16));
+}
+
+// v1.3.0 goldens. Computed via createNoise(42) to match the functional suite;
+// instance == module at the same seed, so the module functions would agree.
+{
+    const n = createNoise(42);
+    const rf = new Float32Array(128 * 128), bf = new Float32Array(128 * 128);
+    let i = 0;
+    for (let y = 0; y < 128; y++) for (let x = 0; x < 128; x++) rf[i++] = n.ridged2(x * 0.02, y * 0.02);
+    i = 0;
+    for (let y = 0; y < 128; y++) for (let x = 0; x < 128; x++) bf[i++] = n.billow2(x * 0.02, y * 0.02);
+    console.log('GOLDEN_RIDGED_HASH =', fnv1a(new Uint8Array(rf.buffer)).toString(16));
+    console.log('GOLDEN_BILLOW_HASH =', fnv1a(new Uint8Array(bf.buffer)).toString(16));
+
+    const tf = new Float32Array(64 * 64);
+    i = 0;
+    for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) tf[i++] = n.tileable2(x / 64 * 4, y / 64 * 4, 4, 4);
+    console.log('GOLDEN_TILE_HASH   =', fnv1a(new Uint8Array(tf.buffer)).toString(16));
+
+    const lf = new Float32Array(720);
+    for (let k = 0; k < 720; k++) lf[k] = n.noiseLoop(k / 720 * Math.PI * 2, 1.5);
+    console.log('GOLDEN_LOOP_HASH   =', fnv1a(new Uint8Array(lf.buffer)).toString(16));
 }

@@ -22,7 +22,7 @@
  * the gate must then reject the window. That is the T9 control, exercisable here.
  */
 
-import { createNoise, Noise, seedNoise, simplex2, simplex3, fbm2, fbm3, curl2, curl3, warp2, fillField2 } from '../../Noise.js';
+import { createNoise, Noise, seedNoise, simplex2, simplex3, fbm2, fbm3, ridged2, billow2, noiseLoop, tileable2, curl2, curl3, warp2, fillField2 } from '../../Noise.js';
 import { runOpsGate, bakeAlloc, BREAK, check, die, arrayBufferBytes, forceGc } from './harness.mjs';
 
 const OPS = 50000;
@@ -67,6 +67,7 @@ export function run() {
     const v3 = { x: 0, y: 0, z: 0 };
     const field = new Float32Array(64 * 64);
     const FIELD_OPTS = { scale: 0.01, octaves: 4, lacunarity: 2, gain: 0.5 };
+    const FIELD_NORM_OPTS = { scale: 0.01, octaves: 4, lacunarity: 2, gain: 0.5, normalize: true };
 
     // --- Module surface -------------------------------------------------------
     gate('module.simplex2', (i) => { simplex2(i * 0.017, i * 0.023); if (BREAK) leak.push(new Float64Array(32)); }, OPS, WARMUP);
@@ -75,21 +76,31 @@ export function run() {
     gate('module.fbm2', (i) => { fbm2(i * 0.017, i * 0.023); }, OPS, WARMUP);
     gate('module.fbm2(custom)', (i) => { fbm2(i * 0.017, i * 0.023, 6, 2.1, 0.55); }, OPS, WARMUP);
     gate('module.fbm3', (i) => { fbm3(i * 0.017, i * 0.023, i * 0.011, 6); }, OPS, WARMUP);
+    gate('module.ridged2', (i) => { ridged2(i * 0.017, i * 0.023); }, OPS, WARMUP);
+    gate('module.billow2', (i) => { billow2(i * 0.017, i * 0.023); }, OPS, WARMUP);
+    gate('module.noiseLoop', (i) => { noiseLoop(i * 0.017, 1.5); }, OPS, WARMUP);
+    gate('module.tileable2', (i) => { tileable2(i * 0.003 % 4, i * 0.005 % 4, 4, 4); }, OPS, WARMUP);
     gate('module.curl2', (i) => { curl2(i * 0.017, i * 0.023, v2); }, OPS, WARMUP);
     gate('module.curl3', (i) => { curl3(i * 0.017, i * 0.023, i * 0.011, v3); }, OPS, WARMUP);
     gate('module.warp2', (i) => { warp2(i * 0.017, i * 0.023, 1.5, v2); }, OPS, WARMUP);
     bakeGate('module.fillField2(opts)', () => { fillField2(field, 64, 64, FIELD_OPTS); });
     bakeGate('module.fillField2(no-opts)', () => { fillField2(field, 64, 64); });
+    bakeGate('module.fillField2(normalize)', () => { fillField2(field, 64, 64, FIELD_NORM_OPTS); });
 
     // --- Instance surface (must match the module's cost) ----------------------
     gate('instance.simplex2', (i) => { n.simplex2(i * 0.017, i * 0.023); }, OPS, WARMUP);
     gate('instance.simplex3', (i) => { n.simplex3(i * 0.017, i * 0.023, i * 0.011); }, OPS, WARMUP);
     gate('instance.fbm2', (i) => { n.fbm2(i * 0.017, i * 0.023); }, OPS, WARMUP);
     gate('instance.fbm3', (i) => { n.fbm3(i * 0.017, i * 0.023, i * 0.011, 6); }, OPS, WARMUP);
+    gate('instance.ridged2', (i) => { n.ridged2(i * 0.017, i * 0.023); }, OPS, WARMUP);
+    gate('instance.billow2', (i) => { n.billow2(i * 0.017, i * 0.023); }, OPS, WARMUP);
+    gate('instance.noiseLoop', (i) => { n.noiseLoop(i * 0.017, 1.5); }, OPS, WARMUP);
+    gate('instance.tileable2', (i) => { n.tileable2(i * 0.003 % 4, i * 0.005 % 4, 4, 4); }, OPS, WARMUP);
     gate('instance.curl2', (i) => { n.curl2(i * 0.017, i * 0.023, v2); }, OPS, WARMUP);
     gate('instance.curl3', (i) => { n.curl3(i * 0.017, i * 0.023, i * 0.011, v3); }, OPS, WARMUP);
     gate('instance.warp2', (i) => { n.warp2(i * 0.017, i * 0.023, 1.5, v2); }, OPS, WARMUP);
     bakeGate('instance.fillField2', () => { n.fillField2(field, 64, 64, FIELD_OPTS); });
+    bakeGate('instance.fillField2(normalize)', () => { n.fillField2(field, 64, 64, FIELD_NORM_OPTS); });
 
     // --- Construction allocates exactly one table -----------------------------
     // Warm the constructor so class/shape feedback is settled, then measure the

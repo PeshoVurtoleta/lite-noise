@@ -11,13 +11,20 @@
  *   L5 curl2 solenoidal near-zero divergence (that IS the point of curl)
  *   L6 instance==module an instance and the module functions produce the SAME
  *                       field at the same seed -- the N1 compatibility contract
+ *   L7 loop seam        noiseLoop(0) === noiseLoop(TAU) exactly; periodic to ULPs
+ *   L8 tile wrap        tileable2 opposite edges are byte-identical (seamless by
+ *                       construction, resolution-free)
+ *   L9 ridged/billow    both live in ~[0,1]; degenerate octaves fall to 0
  */
 
 import {
     createNoise, seedNoise,
-    simplex2, simplex3, fbm2, fbm3, curl2, warp2, fillField2,
+    simplex2, simplex3, fbm2, fbm3, ridged2, billow2, noiseLoop, tileable2,
+    curl2, warp2, fillField2,
 } from '../../Noise.js';
 import { SEED, makePrng, unit, check } from './harness.mjs';
+
+const TAU = Math.PI * 2;
 
 export function run() {
     const next = makePrng(SEED);
@@ -107,6 +114,59 @@ export function run() {
             const x = unit(next) * 40, y = unit(next) * 40, z = unit(next) * 40;
             check(simplex2(x, y) === n.simplex2(x, y), () => `T0.L6: simplex2 instance!=module at ${x},${y}`);
             check(fbm3(x, y, z) === n.fbm3(x, y, z), () => `T0.L6: fbm3 instance!=module at ${x},${y},${z}`);
+            check(ridged2(x, y) === n.ridged2(x, y), () => `T0.L6: ridged2 instance!=module at ${x},${y}`);
+            check(billow2(x, y) === n.billow2(x, y), () => `T0.L6: billow2 instance!=module at ${x},${y}`);
+            check(noiseLoop(x, 1.5) === n.noiseLoop(x, 1.5), () => `T0.L6: noiseLoop instance!=module at ${x}`);
         }
+    }
+
+    // L7 -- the loop seam. The canonical seam is bit-exact (0 + TAU = TAU, and
+    // TAU % TAU = 0), so an animation from 0..TAU closes with ===. Away from the
+    // seam, adding TAU rounds off low bits, so periodicity holds only to a few
+    // ULPs -- assert that honestly rather than claiming exactness it can't have.
+    {
+        const n = createNoise(42);
+        for (let k = 0; k < 300; k++) {
+            const r = 0.25 + (k % 8);
+            check(n.noiseLoop(0, r) === n.noiseLoop(TAU, r),
+                () => `T0.L7: loop seam open at radius ${r}: ${n.noiseLoop(0, r)} vs ${n.noiseLoop(TAU, r)}`);
+            const t = unit(next) * 6;
+            check(Math.abs(n.noiseLoop(t, 1.5) - n.noiseLoop(t + TAU, 1.5)) < 1e-12,
+                () => `T0.L7: loop not periodic to ULPs at t=${t}`);
+        }
+    }
+
+    // L8 -- tileable2 wraps exactly. At every seam the vanishing corner weights
+    // make opposite edges evaluate to the identical expression: no epsilon, no
+    // resolution dependence. This is the real seamlessness proof (the sibling
+    // seamlessScore cross-check lives in the functional suite).
+    {
+        const n = createNoise(3);
+        for (let k = 0; k < 500; k++) {
+            const px = 1 + (k % 7), py = 2 + (k % 5);
+            const y = unit(next) * py;
+            check(n.tileable2(0, y, px, py) === n.tileable2(px, y, px, py),
+                () => `T0.L8: tileable2 horizontal seam open (period ${px}) at y=${y}`);
+            const x = unit(next) * px;
+            check(n.tileable2(x, 0, px, py) === n.tileable2(x, py, px, py),
+                () => `T0.L8: tileable2 vertical seam open (period ${py}) at x=${x}`);
+        }
+    }
+
+    // L9 -- ridged2/billow2 range and degenerate guard. Both are non-negative and
+    // bounded ~[0,1]; octaves <= 0 must fall to 0, not NaN (the shared skeleton's
+    // maxAmp guard covers all three multifractals).
+    {
+        const n = createNoise(5);
+        for (let i = 0; i < 20000; i++) {
+            const x = unit(next) * 128, y = unit(next) * 128;
+            const r = n.ridged2(x, y), b = n.billow2(x, y);
+            check(r >= -0.01 && r <= 1.01, () => `T0.L9: ridged2 out of range: ${r}`);
+            check(b >= -0.01 && b <= 1.01, () => `T0.L9: billow2 out of range: ${b}`);
+        }
+        check(n.ridged2(1.7, 2.3, 0) === 0, () => 'T0.L9: ridged2 octaves=0 not 0');
+        check(n.billow2(1.7, 2.3, 0) === 0, () => 'T0.L9: billow2 octaves=0 not 0');
+        check(n.ridged2(1.7, 2.3, -3) === 0, () => 'T0.L9: ridged2 octaves<0 not 0');
+        check(n.billow2(1.7, 2.3, -3) === 0, () => 'T0.L9: billow2 octaves<0 not 0');
     }
 }

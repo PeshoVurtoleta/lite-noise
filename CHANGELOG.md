@@ -2,6 +2,29 @@
 
 All notable changes to `@zakkster/lite-noise`.
 
+## [1.3.0] — 2026-08-02
+
+**N3** — terrain shapings and loop/tile variants. Four new functions plus the `fillField2` `normalize` option, all riding a shared octave skeleton so two multifractals cost far less than two copies of the FBM loop. The four pre-existing determinism goldens (`ddef5970` / `ca4f9f1e` / `1ac7a518`) are **unchanged** — the `fbm2` refactor onto `_octaves2` is byte-identical, so nothing moved for existing callers.
+
+### Added
+
+- **`ridged2(x, y, octaves?, lacunarity?, gain?)`** — ridged multifractal, `(1 - |simplex|)²` per octave. Sharp creases at zero-crossings that reach the unit ceiling; distribution skewed high. Mountains, cracked earth, veins. Range ~[0, 1]; degenerate `octaves <= 0` returns 0 (the shared skeleton's `maxAmp` guard).
+- **`billow2(x, y, octaves?, lacunarity?, gain?)`** — billow, `|simplex|` per octave. A soft absolute-value fold piling mass at zero, no unit spikes. Clouds, rolling hills, smoke. Range ~[0, 1]; same degenerate guard.
+- **`noiseLoop(t, radius = 1)`** — seamless periodic 1D noise by walking a circle of radius `radius` in the 2D field. `noiseLoop(0) === noiseLoop(2π)` **exactly** (the angle reduces `mod 2π`, and `0 + 2π = 2π`, `2π mod 2π = 0` are all bit-exact), and the derivative matches at the seam. Away from the canonical seam, adding `2π` rounds off low bits, so periodicity elsewhere holds to a few ULPs, not `===`.
+- **`tileable2(x, y, periodX, periodY)`** — tileable 2D noise over `[0, periodX) × [0, periodY)`. A bilinear blend of the sample and its three period-wrapped neighbours: at every seam the vanishing corner weights make opposite edges evaluate to the identical expression, so `tileable2(0, y) === tileable2(periodX, y)` **exactly**, resolution-free. Four `simplex2` samples, zero allocation. Verified independently by `@zakkster/lite-patternforge`'s `seamlessScore` (added as a devDependency) — scores in the imperceptible band (< 0.02) at 256 px, periods 2 and 4. Note: `seamlessScore` compares edge columns directly, so for a full-bleed noise texture it floors at the texture's own per-pixel contrast (halves as resolution doubles) rather than at 0; the exact-wrap equality is the unconditional proof, the score is the calibrated cross-check.
+- **`fillField2` `normalize: true` option** — an optional second in-place pass remapping the baked field to exact `[0, 1]` endpoints (the raw fill is amplitude-normalised but ~[-0.84, 0.82] at the defaults; a colour ramp usually wants 0..1). Allocation-free (two scalar-tracking passes, no temp buffer). A constant field maps to all-zero rather than dividing by zero. The omitted-`normalize` path is unchanged and still zero-alloc.
+- Instance methods `ridged2` / `billow2` / `noiseLoop` / `tileable2` on `Noise`, byte-identical to the module functions at the same seed. New determinism goldens (`2342c230` / `acf96355` / `b6d00662` / `2cfa58f8`) committed and covered by `npm run goldens`.
+
+### Changed
+
+- **`fbm2` now delegates to a shared `_octaves2(perm, x, y, octaves, lacunarity, gain, mode)` skeleton** (`mode` 0/1/2 = fbm/ridged/billow). The mode-0 arithmetic is byte-identical to the previous inlined `_fbm2` — skipped branches never touch the sample — so the `fbm2`, warp, and field goldens do not move. This share is what let four functions land without four copies of the octave loop.
+- **Bundle ceiling raised 2,048 → 2,560 B** (measured **2,291 B min+gz**), deliberately, for the four new functions. `ridged2`/`billow2` are one-line wrappers over `_octaves2`; `noiseLoop` and especially `tileable2`'s four-sample blend are genuinely new code the skeleton share can't absorb. `bundle-check` still externalises nothing — zero runtime dependencies hold.
+- **Torture harness** extended: T0 gains L7 (loop seam exact + periodic-to-ULPs), L8 (tileable exact wrap), L9 (ridged/billow range + degenerate guard), and L6 now covers the new instance==module surfaces; T6 gates the four new hot paths (module + instance) and the `normalize` bake path at the same `{ maxBytesPerOp: 2, maxMajorsPerKOp: 0 }` ceiling.
+
+### Documentation
+
+- **`gain` domain clarified: `gain >= 0`.** The `ridged2` / `billow2` ~[0, 1] range (and `fbm2` / `fbm3`'s ~[-1, 1]) holds only for a non-negative gain — the standard FBM persistence, typically 0..1. A negative gain alternates the per-octave amplitude sign and pushes the output past those ranges; this latitude has always existed in `fbm2` and is now stated as a domain contract across all four functions (surfaced by the N3 QA boundary sweep). Not guarded on the hot path — gain < 0 is a caller error, not a data value. Also documents `tileable2`'s `periodX, periodY > 0` precondition (a period of 0 divides by zero and returns a non-finite value).
+
 ## [1.2.0] — 2026-08-02
 
 Two sessions, releasing together as this minor: **N0** brought the package to the ecosystem's house law with **zero runtime dependencies**; **N1** added the instance API that fixes the shared-seed correctness bug (NS-01). The determinism goldens (`ddef5970` / `ca4f9f1e` / `1ac7a518`) are **unchanged throughout** — every change is behavior-neutral for existing callers, which is what keeps N1 a minor rather than a major.

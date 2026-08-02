@@ -1,7 +1,7 @@
 {
   "name": "@zakkster/lite-noise",
-  "version": "1.2.0",
-  "description": "Zero-GC seeded Simplex 2D/3D noise, unrolled FBM, curl2, curl3, domain warp, and bakeable heightfields. Deterministic via seeded permutation table.",
+  "version": "1.3.0",
+  "description": "Zero-GC seeded Simplex 2D/3D noise, unrolled FBM, ridged/billow multifractals, seamless loop, tileable field, curl2, curl3, domain warp, and bakeable heightfields. Deterministic via seeded permutation table.",
   "author": "Zahary Shinikchiev <shinikchiev@yahoo.com>",
   "license": "MIT",
   "type": "module",
@@ -54,6 +54,7 @@
   },
   "devDependencies": {
     "@zakkster/lite-gc-profiler": "^1.14.1",
+    "@zakkster/lite-patternforge": "^1.0.0",
     "esbuild": "^0.25.0"
   },
   "scripts": {

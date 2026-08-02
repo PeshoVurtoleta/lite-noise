@@ -1,5 +1,6 @@
 /**
- * @zakkster/lite-noise v1.2.0 — Zero-GC seeded Simplex + FBM + curl + warp.
+ * @zakkster/lite-noise v1.3.0 — Zero-GC seeded Simplex + FBM + ridged/billow +
+ * seamless loop + tileable field + curl + warp.
  *
  * Two ways to sample:
  *   - `createNoise(seed)` returns a `Noise` instance owning its OWN permutation
@@ -39,6 +40,10 @@ export declare class Noise {
     simplex3(x: number, y: number, z: number): number;
     fbm2(x: number, y: number, octaves?: number, lacunarity?: number, gain?: number): number;
     fbm3(x: number, y: number, z: number, octaves?: number, lacunarity?: number, gain?: number): number;
+    ridged2(x: number, y: number, octaves?: number, lacunarity?: number, gain?: number): number;
+    billow2(x: number, y: number, octaves?: number, lacunarity?: number, gain?: number): number;
+    noiseLoop(t: number, radius?: number): number;
+    tileable2(x: number, y: number, periodX: number, periodY: number): number;
     curl2(x: number, y: number, out: Vec2): Vec2;
     curl3(x: number, y: number, z: number, out: Vec3): Vec3;
     warp2(x: number, y: number, strength: number, out: Vec2): Vec2;
@@ -71,8 +76,10 @@ export declare function simplex3(x: number, y: number, z: number): number;
  * Unrolled 2D FBM over `simplex2`. Zero allocation.
  *
  * `octaves` must be >= 1. `octaves = 0` or negative returns 0 (rather than
- * NaN) so data-driven biome / terrain configs can't poison a buffer. All
- * numeric defaults match Quilez's canonical presets.
+ * NaN) so data-driven biome / terrain configs can't poison a buffer. `gain`
+ * (per-octave amplitude decay) must be >= 0 -- the standard FBM domain,
+ * typically 0..1; a negative gain alternates the amplitude sign and pushes the
+ * output past ~[-1, 1]. All numeric defaults match Quilez's canonical presets.
  */
 export declare function fbm2(
     x: number,
@@ -94,6 +101,55 @@ export declare function fbm3(
     lacunarity?: number,
     gain?: number,
 ): number;
+
+/**
+ * Ridged multifractal 2D -- `(1 - |simplex|)^2` per octave over the shared FBM
+ * skeleton. Sharp creases at zero-crossings, distribution skewed high: mountains,
+ * cracked earth, veins. Same octaves >= 1 contract as `fbm2` (octaves <= 0 -> 0).
+ * Range ~[0, 1] holds for `gain >= 0`; a negative gain voids the guarantee.
+ */
+export declare function ridged2(
+    x: number,
+    y: number,
+    octaves?: number,
+    lacunarity?: number,
+    gain?: number,
+): number;
+
+/**
+ * Billow 2D -- `|simplex|` per octave over the shared FBM skeleton. Puffy,
+ * folded, absolute-value-symmetric: clouds, rolling hills, smoke. Same
+ * octaves >= 1 contract as `fbm2` (octaves <= 0 -> 0). Range ~[0, 1] holds for
+ * `gain >= 0`; a negative gain voids the guarantee.
+ */
+export declare function billow2(
+    x: number,
+    y: number,
+    octaves?: number,
+    lacunarity?: number,
+    gain?: number,
+): number;
+
+/**
+ * Seamless periodic 1D noise -- samples a circle of radius `radius` in the 2D
+ * field. Drive `t` from 0 to 2*PI for a perfect loop: `noiseLoop(0)` and
+ * `noiseLoop(2*PI)` are the identical sample (exact `===`), and the derivative
+ * matches at the seam. `t` is reduced modulo 2*PI.
+ */
+export declare function noiseLoop(t: number, radius?: number): number;
+
+/**
+ * Tileable 2D noise over `[0, periodX) x [0, periodY)`. A bilinear blend of the
+ * sample and its three period-wrapped neighbours -- seamless at every seam by
+ * construction. Four `simplex2` samples, zero allocation. The blend narrows the
+ * extremes, so the range is a little inside [-1, 1].
+ *
+ * Precondition: `periodX > 0` and `periodY > 0`. A period of 0 divides by zero
+ * and returns a non-finite value (NaN or +/-Infinity) -- unguarded on this hot
+ * path (a zero tile size is a caller error, not a data-driven value); pass
+ * positive extents.
+ */
+export declare function tileable2(x: number, y: number, periodX: number, periodY: number): number;
 
 /** Vec2 — writable by curl2 / warp2. Caller owns the object. */
 export interface Vec2 { x: number; y: number; }
@@ -146,6 +202,12 @@ export interface FillField2Options {
     ox?: number;
     /** Y coordinate at (0, 0). Default 0. */
     oy?: number;
+    /**
+     * Remap the baked field to exact [0, 1] in a second in-place pass. The raw
+     * fill is ~[-0.84, 0.82] at the defaults; a colour ramp usually wants 0..1.
+     * A constant field maps to all-zero. Default false.
+     */
+    normalize?: boolean;
 }
 
 /**

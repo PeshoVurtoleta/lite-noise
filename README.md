@@ -20,14 +20,17 @@ It gives you:
 
 - 🌊 Simplex 2D and 3D noise
 - 🏔️ FBM (fractal Brownian motion) with configurable octaves
+- ⛰️ `ridged2` / `billow2` multifractals — mountains and clouds, sharing the FBM skeleton
+- 🔁 `noiseLoop` — seamless periodic 1D noise for perfect animation loops
+- 🧩 `tileable2` — seamless tiling textures (cross-checked by `lite-patternforge`'s `seamlessScore`)
 - 🌀 Curl noise (2D and 3D) for smoke, fluid, and volumetric particle movement
 - 🌀 Quilez-style domain warping over FBM
-- 🗺️ `fillField2` — bake a Float32Array heightfield in one call, row-incremental coord stepping
+- 🗺️ `fillField2` — bake a Float32Array heightfield in one call, row-incremental coord stepping, optional `normalize` to [0,1]
 - 🎲 Seeded via an inlined Mulberry32 PRNG (deterministic, reproducible, **zero runtime dependencies**)
 - 0️⃣ Zero allocation in any hot-path function (unrolled FBM, no rest/spread, no per-cell object synthesis)
 - 🧹 Caller-owned output for `curl2` / `curl3` / `warp2` (no shared reference bugs)
-- 🛡️ Zero-alloc claim made falsifiable via `@zakkster/lite-gc-profiler` gates (`npm run test:gc`)
-- 🪶 ~1.98 KB minified + gzipped, self-contained (zero dependencies; measured by `npm run bundle-check`)
+- 🛡️ Zero-alloc claim made falsifiable via `@zakkster/lite-gc-profiler` gates (`npm run torture`)
+- 🪶 ~2.24 KB minified + gzipped, self-contained (zero dependencies; measured by `npm run bundle-check`)
 
 Part of the [@zakkster/lite-*](https://www.npmjs.com/org/zakkster) ecosystem — micro-libraries built for deterministic, cache-friendly game development.
 
@@ -44,6 +47,8 @@ import {
     seedNoise,
     simplex2, simplex3,
     fbm2, fbm3,
+    ridged2, billow2,
+    noiseLoop, tileable2,
     curl2, curl3,
     warp2,
     fillField2,
@@ -51,6 +56,16 @@ import {
 
 // Seed for reproducibility
 seedNoise(42);
+
+// v1.3.0: ridged mountains + billow clouds (share the FBM octave skeleton)
+const peak = ridged2(x * 0.01, y * 0.01, 6);
+const puff = billow2(x * 0.01, y * 0.01, 6);
+
+// v1.3.0: a perfect animation loop — t sweeps 0..2π, closes seamlessly
+const wobble = noiseLoop((frame / TOTAL) * Math.PI * 2, 1.5);
+
+// v1.3.0: a seamless tiling texture, period 4 in noise space
+const tile = tileable2(u * 4, v * 4, 4, 4);  // wraps edge-to-edge
 
 // v1.1.0: bake a heightfield in one call, zero allocation
 const heightmap = new Float32Array(256 * 256);
@@ -115,9 +130,9 @@ Under a single seed and single consumer this is invisible; the moment two consum
 |-----------------|--------------:|:-------:|:-------:|:-------:|:-------:|:-------:|:----------:|:-------:|--------------------------------------|
 | simplex-noise   | ~8 KB         | No      | No      | No      | No      | No      | No         | No      | `npm i simplex-noise`                |
 | noisejs         | ~4 KB         | Yes     | No      | No      | No      | No      | No         | No      | `npm i noisejs`                      |
-| **lite-noise**  | **~1.98 KB**† | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes**    | **Yes** | `npm i @zakkster/lite-noise`         |
+| **lite-noise**  | **~2.24 KB**† | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes**    | **Yes** | `npm i @zakkster/lite-noise`         |
 
-† lite-noise's figure is minified **+ gzipped**, self-contained — the full installed footprint with **zero runtime dependencies** (1,975 B, `npm run bundle-check`). The other libraries' sizes are their published bundle sizes as listed on npm.
+† lite-noise's figure is minified **+ gzipped**, self-contained — the full installed footprint with **zero runtime dependencies** (2,291 B, `npm run bundle-check`). The other libraries' sizes are their published bundle sizes as listed on npm. And this figure buys more: ridged/billow multifractals, seamless `noiseLoop`, and `tileable2` on top of the columns above.
 
 ## ⚙️ API
 
@@ -128,14 +143,18 @@ Every sampler below exists twice: as a module function sharing one table, and as
 - `createNoise(seed?) → Noise` — an independent noise field owning its own permutation table. The way to run two consumers without collision.
 - `new Noise(seed?)` — the class behind `createNoise`, exported for `instanceof` / typing.
 - `noise.seed(seed) → this` — re-seed an instance in place; affects only that instance.
-- `noise.simplex2 / simplex3 / fbm2 / fbm3 / curl2 / curl3 / warp2 / fillField2` — instance methods mirroring the module functions below.
+- `noise.simplex2 / simplex3 / fbm2 / fbm3 / ridged2 / billow2 / noiseLoop / tileable2 / curl2 / curl3 / warp2 / fillField2` — instance methods mirroring the module functions below.
 
 ### Scalar samplers
 
 - `simplex2(x, y) → number` — 2D Simplex, approx. `[-1, 1]`
 - `simplex3(x, y, z) → number` — 3D Simplex, approx. `[-1, 1]`
-- `fbm2(x, y, octaves?, lacunarity?, gain?) → number` — unrolled 2D FBM, zero alloc. `octaves ≥ 1`; `octaves = 0` returns `0`, not `NaN`.
-- `fbm3(x, y, z, octaves?, lacunarity?, gain?) → number` — unrolled 3D FBM, same octaves contract.
+- `fbm2(x, y, octaves?, lacunarity?, gain?) → number` — unrolled 2D FBM, zero alloc. `octaves ≥ 1`; `octaves = 0` returns `0`, not `NaN`. **`gain ≥ 0`** (per-octave amplitude decay, the standard FBM domain, typically `0..1`) — a negative gain alternates the amplitude sign and pushes the output past `~[-1, 1]`. This domain caveat is shared by `ridged2` / `billow2`.
+- `fbm3(x, y, z, octaves?, lacunarity?, gain?) → number` — unrolled 3D FBM, same octaves and `gain ≥ 0` contract.
+- `ridged2(x, y, octaves?, lacunarity?, gain?) → number` — ridged multifractal, `(1 − |simplex|)²` per octave over the shared FBM skeleton. Sharp creases reaching the unit ceiling; range ~`[0, 1]`, skewed high. Same octaves contract. The `[0, 1]` range holds for `gain ≥ 0` (the FBM domain); a negative gain voids it (see FBM note below).
+- `billow2(x, y, octaves?, lacunarity?, gain?) → number` — billow, `|simplex|` per octave. Soft absolute-value fold piling at zero; range ~`[0, 1]`. Same octaves and `gain ≥ 0` contract.
+- `noiseLoop(t, radius?) → number` — seamless periodic 1D noise on a circle of radius `radius` (default `1`). `noiseLoop(0) === noiseLoop(2π)` **exactly** and the derivative matches at the seam — drive `t` over `0..2π` for a perfect loop. `t` is reduced `mod 2π`.
+- `tileable2(x, y, periodX, periodY) → number` — tileable 2D noise over `[0, periodX) × [0, periodY)`. Opposite edges are byte-identical (`tileable2(0, y) === tileable2(periodX, y)`), so tiles are seamless by construction. Four `simplex2` samples; the blend narrows the extremes slightly inside `[-1, 1]`. **Precondition:** `periodX, periodY > 0` — a period of `0` divides by zero and returns a non-finite value (`NaN` or `±Infinity`) (unguarded on the hot path; a zero tile size is a caller error, not a data value).
 
 ### Vector samplers (caller-owned out)
 
@@ -145,7 +164,7 @@ Every sampler below exists twice: as a module function sharing one table, and as
 
 ### Field bake
 
-- `fillField2(out, w, h, opts?) → out` — bake a `w × h` FBM heightfield into a caller-supplied `Float32Array` / `Float64Array`. `opts` (all optional): `scale`, `octaves`, `lacunarity`, `gain`, `ox`, `oy`. Row-incremental coord stepping (no per-cell multiplies), zero allocation.
+- `fillField2(out, w, h, opts?) → out` — bake a `w × h` FBM heightfield into a caller-supplied `Float32Array` / `Float64Array`. `opts` (all optional): `scale`, `octaves`, `lacunarity`, `gain`, `ox`, `oy`, `normalize`. Row-incremental coord stepping (no per-cell multiplies), zero allocation. The raw fill is amplitude-normalised but ~`[-0.84, 0.82]` at the defaults; `normalize: true` does a second in-place pass to exact `[0, 1]` (a colour ramp usually wants this). `out` is caller-owned and written start-to-end — don't alias it with anything read during the call.
 
 ### Seed
 
@@ -153,13 +172,13 @@ Every sampler below exists twice: as a module function sharing one table, and as
 
 ## 🛡️ Zero-GC — falsifiable, not asserted
 
-The zero-allocation claim on every hot path (`simplex2`, `simplex3`, `fbm2`, `fbm3`, `curl2`, `curl3`, `warp2`, and both `fillField2` opts paths) is gated by [`@zakkster/lite-gc-profiler`](https://www.npmjs.com/package/@zakkster/lite-gc-profiler):
+The zero-allocation claim on every hot path (`simplex2`, `simplex3`, `fbm2`, `fbm3`, `ridged2`, `billow2`, `noiseLoop`, `tileable2`, `curl2`, `curl3`, `warp2`, and the `fillField2` bakes incl. `normalize`) — across **both** the module functions and the instance methods — is gated by [`@zakkster/lite-gc-profiler`](https://www.npmjs.com/package/@zakkster/lite-gc-profiler):
 
 ```bash
-npm run test:gc
+npm run torture
 ```
 
-The gate uses `assertOps` with `stabilize: true` so heap deltas reflect the surviving-allocation delta (retention), not transient churn. Rules: `maxBytesPerOp: 2` (V8's inline-cache / feedback-vector noise floor per the profiler docs) plus `maxMajorsPerKOp: 0` — a real allocation crosses both bars, V8 noise crosses neither.
+Point samplers use `measureOps` / `checkOps` with `stabilize: true` so heap deltas reflect the surviving-allocation delta (retention), not transient churn. Rules: `maxBytesPerOp: 2` (V8's inline-cache / feedback-vector noise floor per the profiler docs) plus `maxMajorsPerKOp: 0` — a real allocation crosses both bars, V8 noise crosses neither. Heavy `fillField2` bakes are gated on major-GC count and ArrayBuffer retention instead. `NOISE_TORTURE_BREAK=1 npm run torture` injects a leak and must exit non-zero — proof the gate can bite.
 
 ## 🎯 Determinism goldens
 
@@ -168,6 +187,10 @@ The gate uses `assertOps` with `stabilize: true` so heap deltas reflect the surv
 - 256×256 default `fillField2` → `ddef5970`
 - 128×128 `warp2 + fbm2` → `ca4f9f1e`
 - 32×32×8 `curl3` slab → `1ac7a518`
+- 128×128 `ridged2` → `2342c230`
+- 128×128 `billow2` → `acf96355`
+- 64×64 period-4 `tileable2` → `b6d00662`
+- 720-sample `noiseLoop` → `2cfa58f8`
 
 Any change to those numbers is a breaking change and requires a CHANGELOG entry. Regenerate via `npm run goldens` when the change is intentional.
 

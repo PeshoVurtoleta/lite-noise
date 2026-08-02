@@ -15,11 +15,13 @@ import { build } from 'esbuild';
 import { gzipSync } from 'node:zlib';
 import { readFileSync, unlinkSync } from 'node:fs';
 
-const CEILING = 2048;                  // bytes, min+gz — self-contained, zero deps.
-// Rose from 1550 with the v1.2.0 instance API (createNoise / Noise class + the
-// dual module surface). Module functions stay explicit delegators, not bound
-// methods off a default instance, so a `simplex2`-only import still tree-shakes
-// the class away -- worth the bytes. Measured 1,975 B; ~2 KiB is the new bound.
+const CEILING = 2560;                  // bytes, min+gz — self-contained, zero deps.
+// Rose from 2048 with v1.3.0: ridged2, billow2, noiseLoop, tileable2 (+ the
+// fillField2 `normalize` pass). ridged2/billow2 are one-line wrappers over a
+// shared `_octaves2` skeleton (that share is why two multifractals cost far less
+// than two copies of the octave loop), but noiseLoop and especially tileable2's
+// four-sample blend are genuinely new code. Measured 2,291 B min+gz; 2.5 KiB is
+// the deliberate new bound, recorded in CHANGELOG [1.3.0]. ~269 B headroom.
 const OUT = 'test-bundle.js';
 
 await build({
