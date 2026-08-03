@@ -1,4 +1,4 @@
-# @zakkster/lite-noise v1.3.0
+# @zakkster/lite-noise v1.4.0
 
 > Zero-GC seeded Simplex 2D/3D noise, unrolled FBM, ridged/billow multifractals,
 > seamless loop, tileable field, curl2, curl3, Quilez-style domain warp, and
@@ -249,11 +249,38 @@ for (let y = 0; y < W; y++)
     for (let x = 0; x < W; x++)
         tex[t++] = tileable2(x / W * 4, y / W * 4, 4, 4);  // wraps edge-to-edge
 
+## Ecosystem recipes (v1.4.0)
+
+Runnable, CI-tested integration recipes in examples/ (NOT shipped in the
+tarball). Each adds ZERO runtime dependency -- the peers are devDependencies and
+each recipe holds its own createNoise instance, so two on one page never collide.
+
+- curl2 -> lite-particles advection (examples/curl-advection.mjs). The seam needs
+  no API from either side: an Emitter onUpdate(p, dt) hook samples curl2 into a
+  pre-allocated {x,y} and writes p.vx/p.vy. Both curl2 and Emitter.update are
+  0 B/call, so the combined loop is zero-alloc.
+- fillField2 -> lite-gl field (examples/field-to-gl.mjs). A baked Float32Array is
+  exactly a GL instance buffer. Packs one LAYOUT.POINT instance per cell (stride
+  8: x,y,size,r,g,b,a,_pad -- lite-gl LAYOUT.POINT === lite-particles POINT_STRIDE)
+  and proves the handoff by a BIT-EXACT round-trip (bake -> field.push -> read
+  field.data back -> byte-identical). The live GPU upload/readback is lite-gl's
+  own tested territory: sink.upload(field.data, 0, count*8, 0, 8).
+- curl ambient behavior (examples/ambient-curl.mjs). registerBehavior('CURL', ...)
+  whose tick advances particles through a curl field. Registration + the pure
+  advance() physics are CI-tested headless; createAmbientFX(canvas, ...) and the
+  draw calls are browser-only. ambient-fx keeps its zero-dep pledge -- recipe,
+  not dependency.
+- N1 composability, asserted at the integration level: two instance-backed flows
+  interleaved in one process produce byte-identical trajectories to each run
+  alone.
+
 ## Dependencies
 
 - None (production). Seed provenance is an inlined Mulberry32 PRNG.
 - @zakkster/lite-gc-profiler  (dev only, gate on zero-alloc)
 - @zakkster/lite-patternforge (dev only, seamlessScore cross-check for tileable2)
+- @zakkster/lite-particles, @zakkster/lite-gl, @zakkster/lite-ambient-fx
+  (dev only, the v1.4.0 ecosystem-seam recipes; no runtime dep added)
 
 ## Repository
 

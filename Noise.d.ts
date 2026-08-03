@@ -1,5 +1,5 @@
 /**
- * @zakkster/lite-noise v1.3.0 — Zero-GC seeded Simplex + FBM + ridged/billow +
+ * @zakkster/lite-noise v1.4.0 — Zero-GC seeded Simplex + FBM + ridged/billow +
  * seamless loop + tileable field + curl + warp.
  *
  * Two ways to sample:

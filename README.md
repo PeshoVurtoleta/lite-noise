@@ -194,6 +194,16 @@ Point samplers use `measureOps` / `checkOps` with `stabilize: true` so heap delt
 
 Any change to those numbers is a breaking change and requires a CHANGELOG entry. Regenerate via `npm run goldens` when the change is intentional.
 
+## 🔗 Ecosystem recipes
+
+Runnable, CI-tested integration recipes live in [`examples/`](examples/) (not shipped in the tarball). Each adds **zero runtime dependency** — the peers are dev-only, and each recipe holds its own `createNoise` instance, so two on one page never collide (the reason the instance API came first).
+
+- **`curl2` → `@zakkster/lite-particles`** ([`curl-advection.mjs`](examples/curl-advection.mjs)) — advect particles through a curl flow field. Needs no API from either side: an `onUpdate(p, dt)` hook samples `curl2` into a pre-allocated `{x,y}` and writes `p.vx`/`p.vy`. Both sides are 0 B/call, so the loop is zero-alloc.
+- **`fillField2` → `@zakkster/lite-gl`** ([`field-to-gl.mjs`](examples/field-to-gl.mjs)) — a baked `Float32Array` *is* a GL instance buffer. Packs one `LAYOUT.POINT` per cell (stride 8, and `LAYOUT.POINT === lite-particles POINT_STRIDE`) and proves the handoff with a **bit-exact round-trip**. The live GPU upload/readback is lite-gl's own tested territory.
+- **Curl ambient behavior** ([`ambient-curl.mjs`](examples/ambient-curl.mjs)) — a `registerBehavior('CURL', …)` whose `tick` advances particles through a curl field. Registration + physics are CI-tested headless; the canvas render is browser-only. ambient-fx keeps its zero-dep pledge — a recipe, not a dependency.
+
+**N1 composability is asserted at the integration level:** two instance-backed flows interleaved in one process produce byte-identical trajectories to each run alone. `npm test` runs all of this against the installed peers.
+
 ## 🧪 Benchmark
 
 ```bash

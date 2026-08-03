@@ -2,6 +2,22 @@
 
 All notable changes to `@zakkster/lite-noise`.
 
+## [1.4.0] — 2026-08-03
+
+**N4** — ecosystem seams. Three runnable, CI-tested integration recipes proving lite-noise composes with its neighbors, adding **zero runtime dependency** (the peers are dev-only, and every published range/behavior is unchanged). No new exports; no change to `Noise.js` runtime code.
+
+### Added
+
+- **`examples/curl-advection.mjs`** — advect `@zakkster/lite-particles` through a `curl2` flow field. The seam needs no API from either package: an `Emitter` `onUpdate(p, dt)` hook samples `curl2` into a pre-allocated `{x,y}` and writes `p.vx`/`p.vy`. Both `curl2` and `Emitter.update` are 0 B/call, so the combined advection loop is zero-alloc.
+- **`examples/field-to-gl.mjs`** — hand a baked `fillField2` heightfield to a `@zakkster/lite-gl` field. Packs one `LAYOUT.POINT` instance per cell (stride 8: `x,y,size,r,g,b,a,_pad`) and proves the handoff with a **bit-exact round-trip**: bake → `field.push` → read `field.data` back → byte-identical. Asserts `lite-gl LAYOUT.POINT === lite-particles POINT_STRIDE` (the shared contract). The live GPU upload/readback is lite-gl's own tested territory; this proves the data handoff headless.
+- **`examples/ambient-curl.mjs`** — a curl-driven `registerBehavior('CURL', …)` for `@zakkster/lite-ambient-fx`. Registration and the pure `advance()` physics are CI-tested headless; `createAmbientFX(canvas, …)` and the draw calls are browser-only (documented). ambient-fx keeps its zero-dependency pledge — recipe, not dependency.
+- **`test/recipes.test.js`** — runs all three recipes against the installed peers, asserts the field→GL round-trip is byte-exact, and asserts **N1 composability at the integration level**: two instance-backed flows interleaved in one process produce byte-identical trajectories to each run alone (the `createNoise` isolation guarantee, proven end-to-end).
+
+### Changed
+
+- **devDependencies** — added `@zakkster/lite-particles@^1.5.0`, `@zakkster/lite-gl@^1.4.0`, `@zakkster/lite-ambient-fx@^1.8.0` for the recipes, plus `@zakkster/lite-signal` + an `overrides` block to resolve lite-gl's transitive peer graph. All dev-only. `dependencies` stays empty — the "no runtime dependency" assertion is itself a test. `examples/` is not in `files[]`, so the tarball is unchanged.
+- Version stamped 1.4.0 across `package.json`, the `Noise.js`/`Noise.d.ts` headers, and `llms.txt` (which gains an "Ecosystem recipes" section). Bundle is unchanged (2,291 B min+gz) — no runtime code moved.
+
 ## [1.3.0] — 2026-08-02
 
 **N3** — terrain shapings and loop/tile variants. Four new functions plus the `fillField2` `normalize` option, all riding a shared octave skeleton so two multifractals cost far less than two copies of the FBM loop. The four pre-existing determinism goldens (`ddef5970` / `ca4f9f1e` / `1ac7a518`) are **unchanged** — the `fbm2` refactor onto `_octaves2` is byte-identical, so nothing moved for existing callers.
