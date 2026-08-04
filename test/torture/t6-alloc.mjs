@@ -22,7 +22,7 @@
  * the gate must then reject the window. That is the T9 control, exercisable here.
  */
 
-import { createNoise, Noise, seedNoise, simplex2, simplex3, fbm2, fbm3, ridged2, billow2, noiseLoop, tileable2, curl2, curl3, warp2, fillField2 } from '../../Noise.js';
+import { createNoise, Noise, seedNoise, simplex2, simplex3, fbm2, fbm3, ridged2, billow2, noiseLoop, tileable2, curl2, curl3, warp2, fillField2, tileableField2 } from '../../Noise.js';
 import { runOpsGate, bakeAlloc, BREAK, check, die, arrayBufferBytes, forceGc } from './harness.mjs';
 
 const OPS = 50000;
@@ -68,6 +68,14 @@ export function run() {
     const field = new Float32Array(64 * 64);
     const FIELD_OPTS = { scale: 0.01, octaves: 4, lacunarity: 2, gain: 0.5 };
     const FIELD_NORM_OPTS = { scale: 0.01, octaves: 4, lacunarity: 2, gain: 0.5, normalize: true };
+    // tileableField2 bakes 64*64 harmonic-octave samples/op -- gated as a heavy
+    // bake (major-GC + arrayBuffers), same class as fillField2. One opts object
+    // per model, allocated ONCE here, reused every op (the hot body must not
+    // build one). Mode is decoded from the string ONCE per call at setup.
+    const TF2_FBM = { model: 'fbm', periodX: 4, periodY: 4, octaves: 4, lacunarity: 2, gain: 0.5 };
+    const TF2_RIDGED = { model: 'ridged', periodX: 4, periodY: 4, octaves: 4, lacunarity: 2, gain: 0.5 };
+    const TF2_BILLOW = { model: 'billow', periodX: 4, periodY: 4, octaves: 4, lacunarity: 2, gain: 0.5 };
+    const TF2_NORM = { model: 'fbm', periodX: 4, periodY: 4, octaves: 4, lacunarity: 2, gain: 0.5, normalize: true };
 
     // --- Module surface -------------------------------------------------------
     gate('module.simplex2', (i) => { simplex2(i * 0.017, i * 0.023); if (BREAK) leak.push(new Float64Array(32)); }, OPS, WARMUP);
@@ -86,6 +94,10 @@ export function run() {
     bakeGate('module.fillField2(opts)', () => { fillField2(field, 64, 64, FIELD_OPTS); });
     bakeGate('module.fillField2(no-opts)', () => { fillField2(field, 64, 64); });
     bakeGate('module.fillField2(normalize)', () => { fillField2(field, 64, 64, FIELD_NORM_OPTS); });
+    bakeGate('module.tileableField2(fbm)', () => { tileableField2(field, 64, 64, TF2_FBM); });
+    bakeGate('module.tileableField2(ridged)', () => { tileableField2(field, 64, 64, TF2_RIDGED); });
+    bakeGate('module.tileableField2(billow)', () => { tileableField2(field, 64, 64, TF2_BILLOW); });
+    bakeGate('module.tileableField2(normalize)', () => { tileableField2(field, 64, 64, TF2_NORM); });
 
     // --- Instance surface (must match the module's cost) ----------------------
     gate('instance.simplex2', (i) => { n.simplex2(i * 0.017, i * 0.023); }, OPS, WARMUP);
@@ -101,6 +113,9 @@ export function run() {
     gate('instance.warp2', (i) => { n.warp2(i * 0.017, i * 0.023, 1.5, v2); }, OPS, WARMUP);
     bakeGate('instance.fillField2', () => { n.fillField2(field, 64, 64, FIELD_OPTS); });
     bakeGate('instance.fillField2(normalize)', () => { n.fillField2(field, 64, 64, FIELD_NORM_OPTS); });
+    bakeGate('instance.tileableField2(fbm)', () => { n.tileableField2(field, 64, 64, TF2_FBM); });
+    bakeGate('instance.tileableField2(ridged)', () => { n.tileableField2(field, 64, 64, TF2_RIDGED); });
+    bakeGate('instance.tileableField2(billow)', () => { n.tileableField2(field, 64, 64, TF2_BILLOW); });
 
     // --- Construction allocates exactly one table -----------------------------
     // Warm the constructor so class/shape feedback is settled, then measure the

@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { seamlessScore } from '@zakkster/lite-patternforge';
 import {
     seedNoise,
@@ -9,7 +10,7 @@ import {
     noiseLoop, tileable2,
     curl2, curl3,
     warp2,
-    fillField2,
+    fillField2, tileableField2,
     createNoise, Noise,
 } from '../Noise.js';
 
@@ -404,6 +405,207 @@ describe('lite-noise: tileable2', () => {
     });
 });
 
+describe('lite-noise: tileableField2', () => {
+    const MODELS = ['fbm', 'ridged', 'billow'];
+
+    // The naive per-cell reference: the same harmonic-octave sum the field bakes,
+    // but expressed through the PUBLIC tileable2 sampler. Parity between this and
+    // the field is the drift-catch; the seam identity of THIS reference (origin ==
+    // boundary) is what the field inherits.
+    function naiveCell(n, model, px, py, periodX, periodY, octaves, lacunarity, gain) {
+        let amp = 1, freq = 1, total = 0, maxAmp = 0;
+        for (let k = 0; k < octaves; k++) {
+            let s = n.tileable2(px * freq, py * freq, periodX * freq, periodY * freq);
+            if (model === 'ridged') { s = 1 - Math.abs(s); s *= s; }
+            else if (model === 'billow') { s = Math.abs(s) * 2 - 1; }
+            total += s * amp; maxAmp += amp; amp *= gain; freq *= lacunarity;
+        }
+        return maxAmp ? total / maxAmp : 0;
+    }
+
+    // --- Exact seam (zero tolerance) -----------------------------------------
+    // The unconditional seamlessness proof, matching tileable2's exact-wrap test.
+    // The field's column 0 (ox = 0 -> px = 0) is byte-identical to the sample at
+    // the period boundary. We get the boundary column by re-baking with ox =
+    // periodX (so column 0 now samples px = periodX): tileable2(0) === tileable2
+    // (periodX) per octave, so the two fields' column 0 must match on EVERY one of
+    // the 64 rows. The vertical seam is the same with oy. Zero tolerance, Float64
+    // backing (no fround), all 3 models. A regression to an epsilon seam trips
+    // this where seamlessScore (contrast-floored) would not.
+    it('wraps EXACTLY at the period boundary for every model (rows + columns, zero tolerance)', () => {
+        const n = createNoise(42);
+        const W = 64, H = 64, P = 4;
+        for (const model of MODELS) {
+            const base = { model, periodX: P, periodY: P, octaves: 4, lacunarity: 2, gain: 0.5 };
+            const origin = new Float64Array(W * H);
+            const shiftedX = new Float64Array(W * H);
+            const shiftedY = new Float64Array(W * H);
+            n.tileableField2(origin, W, H, base);
+            n.tileableField2(shiftedX, W, H, { ...base, ox: P });   // col 0 samples px = periodX
+            n.tileableField2(shiftedY, W, H, { ...base, oy: P });   // row 0 samples py = periodY
+            for (let y = 0; y < H; y++) {
+                assert.strictEqual(origin[y * W + 0], shiftedX[y * W + 0],
+                    `${model}: horizontal seam open at row ${y}`);
+            }
+            for (let x = 0; x < W; x++) {
+                assert.strictEqual(origin[0 * W + x], shiftedY[0 * W + x],
+                    `${model}: vertical seam open at col ${x}`);
+            }
+        }
+    });
+
+    // --- Naive-loop parity: 4096/4096 cells identical ------------------------
+    it('field bytes match a naive per-cell tileable2 octave loop (4096/4096)', () => {
+        const n = createNoise(42);
+        const W = 64, H = 64, P = 4;
+        for (const model of MODELS) {
+            const f = new Float32Array(W * H);
+            n.tileableField2(f, W, H, { model, periodX: P, periodY: P, octaves: 4, lacunarity: 2, gain: 0.5 });
+            let same = 0;
+            for (let y = 0; y < H; y++) {
+                for (let x = 0; x < W; x++) {
+                    const expect = Math.fround(naiveCell(n, model, x * (P / W), y * (P / H), P, P, 4, 2, 0.5));
+                    if (f[y * W + x] === expect) same++;
+                }
+            }
+            assert.strictEqual(same, W * H, `${model}: only ${same}/${W * H} cells matched the naive loop`);
+        }
+    });
+
+    // --- Model range / behavior character ------------------------------------
+    it('each model produces its expected sign/range character', () => {
+        const n = createNoise(42);
+        const W = 128, H = 128, P = 4;
+        function stats(model) {
+            const f = new Float32Array(W * H);
+            n.tileableField2(f, W, H, { model, periodX: P, periodY: P });
+            let mn = Infinity, mx = -Infinity;
+            for (let i = 0; i < f.length; i++) { if (f[i] < mn) mn = f[i]; if (f[i] > mx) mx = f[i]; }
+            return { mn, mx };
+        }
+        const fbm = stats('fbm'), ridged = stats('ridged'), billow = stats('billow');
+        // fbm: signed -- straddles zero.
+        assert.ok(fbm.mn < 0 && fbm.mx > 0, `fbm not signed: [${fbm.mn}, ${fbm.mx}]`);
+        // ridged: (1-|n|)^2 per octave -- non-negative, reaches the unit crease.
+        assert.ok(ridged.mn >= -1e-6, `ridged went negative: min ${ridged.mn}`);
+        assert.ok(ridged.mx > 0.9, `ridged never reaches a crease: max ${ridged.mx}`);
+        // billow: |n|*2-1 per octave -- folds below zero, unlike ridged.
+        assert.ok(billow.mn < 0, `billow never folds below zero: min ${billow.mn}`);
+    });
+
+    // --- Fail closed at setup (before out is touched) ------------------------
+    it('throws RangeError on an unknown model, naming the valid set', () => {
+        const n = createNoise(42);
+        const out = new Float32Array(16);
+        assert.throws(() => n.tileableField2(out, 4, 4, { model: 'turbulence', periodX: 4, periodY: 4 }),
+            (e) => e instanceof RangeError && /turbulence/.test(e.message) && /fbm/.test(e.message) && /ridged/.test(e.message) && /billow/.test(e.message));
+    });
+
+    it('throws RangeError on non-positive or missing period, before writing out', () => {
+        const n = createNoise(42);
+        const out = new Float32Array(16);
+        out.fill(7);
+        assert.throws(() => n.tileableField2(out, 4, 4, { periodX: 0, periodY: 4 }), RangeError);
+        assert.throws(() => n.tileableField2(out, 4, 4, { periodX: 4, periodY: -1 }), RangeError);
+        assert.throws(() => n.tileableField2(out, 4, 4, { periodX: 4 }), RangeError); // periodY missing
+        assert.throws(() => n.tileableField2(out, 4, 4, {}), RangeError);             // both missing
+        // out untouched -- the fail-closed checks precede the fill.
+        for (let i = 0; i < out.length; i++) assert.strictEqual(out[i], 7, 'out was written despite a setup throw');
+    });
+
+    // --- Determinism: module fn vs instance, byte-identical -------------------
+    it('module function and instance method are byte-identical at the same seed', () => {
+        seedNoise(42);
+        const n = createNoise(42);
+        const W = 48, H = 48, P = 3;
+        for (const model of MODELS) {
+            const fm = new Float32Array(W * H), fi = new Float32Array(W * H);
+            tileableField2(fm, W, H, { model, periodX: P, periodY: P, octaves: 5, gain: 0.55 });
+            n.tileableField2(fi, W, H, { model, periodX: P, periodY: P, octaves: 5, gain: 0.55 });
+            for (let i = 0; i < fm.length; i++) {
+                assert.strictEqual(fm[i], fi[i], `${model}: module!=instance at cell ${i}`);
+            }
+        }
+    });
+
+    // --- Determinism: byte-identical across two node processes ----------------
+    // Two fresh child processes must fingerprint the 3-model field identically --
+    // no address-space / iteration-order dependence in the permutation table or
+    // the bake. A non-zero fingerprint keeps the check non-vacuous.
+    it('is byte-identical across two independent node processes', () => {
+        const url = new URL('../Noise.js', import.meta.url).href;
+        const prog =
+            "import(" + JSON.stringify(url) + ").then(({ createNoise }) => {" +
+            "  const n = createNoise(42); let h = 0x811c9dc5 >>> 0;" +
+            "  for (const model of ['fbm','ridged','billow']) {" +
+            "    const f = new Float32Array(64*64);" +
+            "    n.tileableField2(f, 64, 64, { model, periodX:4, periodY:4, octaves:4, lacunarity:2, gain:0.5 });" +
+            "    const b = new Uint8Array(f.buffer);" +
+            "    for (let i=0;i<b.length;i++){ h ^= b[i]; h = (h*0x01000193)>>>0; } }" +
+            "  process.stdout.write(String(h>>>0));" +
+            "});";
+        const a = spawnSync(process.execPath, ['--input-type=module', '-e', prog], { encoding: 'utf8' });
+        const b = spawnSync(process.execPath, ['--input-type=module', '-e', prog], { encoding: 'utf8' });
+        assert.strictEqual(a.status, 0, `child A failed: ${a.stderr}`);
+        assert.strictEqual(b.status, 0, `child B failed: ${b.stderr}`);
+        assert.ok(a.stdout.length > 0 && a.stdout !== '0', 'empty/degenerate fingerprint');
+        assert.strictEqual(a.stdout, b.stdout, 'two processes disagreed on the field fingerprint');
+    });
+
+    // --- normalize pass -------------------------------------------------------
+    it('normalize remaps to exact [0, 1] endpoints', () => {
+        const n = createNoise(42);
+        const W = 96, H = 96;
+        const out = new Float32Array(W * H);
+        n.tileableField2(out, W, H, { model: 'fbm', periodX: 4, periodY: 4, normalize: true });
+        let mn = Infinity, mx = -Infinity;
+        for (let i = 0; i < out.length; i++) { if (out[i] < mn) mn = out[i]; if (out[i] > mx) mx = out[i]; }
+        assert.ok(Math.abs(mn - 0) < 1e-6, `min not 0: ${mn}`);
+        assert.ok(Math.abs(mx - 1) < 1e-6, `max not 1: ${mx}`);
+    });
+
+    // --- Committed goldens ----------------------------------------------------
+    it('golden: seed 42 -> 64x64 period-4 fields are stable for all 3 models', () => {
+        const n = createNoise(42);
+        const golden = { fbm: GOLDEN_TF2_FBM_HASH, ridged: GOLDEN_TF2_RIDGED_HASH, billow: GOLDEN_TF2_BILLOW_HASH };
+        for (const model of MODELS) {
+            const f = new Float32Array(64 * 64);
+            n.tileableField2(f, 64, 64, { model, periodX: 4, periodY: 4, octaves: 4, lacunarity: 2, gain: 0.5 });
+            assert.strictEqual(fnv1a(new Uint8Array(f.buffer)).toString(16), golden[model], `${model} golden drift`);
+        }
+    });
+
+    // --- seamlessScore cross-check (patternforge, dev-only) -------------------
+    // The unconditional seam proof is the exact `===` wrap above. seamlessScore
+    // is the calibrated sibling cross-check. Note it compares edge COLUMNS, so a
+    // full-bleed multifractal texture floors at its own per-pixel contrast (more
+    // octaves = more contrast), which is why the field scores slightly HIGHER than
+    // a single-octave tileable2 despite an algebraically identical seam -- the same
+    // caveat already documented for tileable2. The meaningful, direction-correct
+    // gate is therefore vs the NON-tileable equivalent field: the tile must score
+    // dramatically better than raw fbm2 at the same base frequency.
+    it('scores dramatically more seamless than the non-tileable fbm2 field (all models)', () => {
+        const n = createNoise(42);
+        const W = 256, P = 4;
+        // Grayscale RGBA motif straight from a baked field buffer (one pixel/cell).
+        function fieldMotif(f) {
+            const m = new Uint32Array(W * W);
+            for (let i = 0; i < f.length; i++) {
+                const g = Math.max(0, Math.min(255, Math.round((f[i] * 0.5 + 0.5) * 255)));
+                m[i] = (255 << 24) | (g << 16) | (g << 8) | g;
+            }
+            return m;
+        }
+        const raw = seamlessScore(toMotif((x, y) => n.fbm2(x, y), W, W, P), W, W).overall;
+        for (const model of MODELS) {
+            const f = new Float64Array(W * W);
+            n.tileableField2(f, W, W, { model, periodX: P, periodY: P });
+            const tiled = seamlessScore(fieldMotif(f), W, W).overall;
+            assert.ok(tiled < raw * 0.25, `${model} field (${tiled.toFixed(4)}) not markedly better than raw fbm2 (${raw.toFixed(4)})`);
+        }
+    });
+});
+
 describe('lite-noise: fillField2 normalize', () => {
     it('remaps to exact [0, 1] endpoints', () => {
         seedNoise(42);
@@ -445,7 +647,7 @@ describe('lite-noise: instance API (createNoise / Noise)', () => {
 
     it('exposes every sampler as a method', () => {
         const n = createNoise(1);
-        for (const m of ['simplex2', 'simplex3', 'fbm2', 'fbm3', 'ridged2', 'billow2', 'noiseLoop', 'tileable2', 'curl2', 'curl3', 'warp2', 'fillField2', 'seed']) {
+        for (const m of ['simplex2', 'simplex3', 'fbm2', 'fbm3', 'ridged2', 'billow2', 'noiseLoop', 'tileable2', 'curl2', 'curl3', 'warp2', 'fillField2', 'tileableField2', 'seed']) {
             assert.strictEqual(typeof n[m], 'function', `missing method: ${m}`);
         }
     });
@@ -765,3 +967,8 @@ const GOLDEN_RIDGED_HASH = '2342c230';
 const GOLDEN_BILLOW_HASH = 'acf96355';
 const GOLDEN_TILE_HASH   = 'b6d00662';
 const GOLDEN_LOOP_HASH   = '2cfa58f8';
+// v1.5.0 -- tileableField2, createNoise(42), 64x64, periodX=periodY=4,
+// octaves=4, lacunarity=2, gain=0.5, over Float32 bytes.
+const GOLDEN_TF2_FBM_HASH    = '8f34c3b8';
+const GOLDEN_TF2_RIDGED_HASH = 'e117b1a8';
+const GOLDEN_TF2_BILLOW_HASH = 'b5d78012';

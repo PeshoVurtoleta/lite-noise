@@ -345,8 +345,8 @@ describe('no runtime dependency added', () => {
 describe('BOUNDARY packaging contract (N4)', () => {
     const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
-    it('is stamped 1.4.0', () => {
-        assert.strictEqual(pkg.version, '1.4.0');
+    it('is stamped 1.5.0', () => {
+        assert.strictEqual(pkg.version, '1.5.0');
     });
 
     it('files[] excludes examples/ and test/ -- the tarball never ships the recipes', () => {

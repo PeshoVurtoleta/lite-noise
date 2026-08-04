@@ -20,7 +20,7 @@
 import {
     createNoise, seedNoise,
     simplex2, simplex3, fbm2, fbm3, ridged2, billow2, noiseLoop, tileable2,
-    curl2, warp2, fillField2,
+    curl2, warp2, fillField2, tileableField2,
 } from '../../Noise.js';
 import { SEED, makePrng, unit, check } from './harness.mjs';
 

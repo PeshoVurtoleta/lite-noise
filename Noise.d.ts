@@ -1,5 +1,5 @@
 /**
- * @zakkster/lite-noise v1.4.0 — Zero-GC seeded Simplex + FBM + ridged/billow +
+ * @zakkster/lite-noise v1.5.0 — Zero-GC seeded Simplex + FBM + ridged/billow +
  * seamless loop + tileable field + curl + warp.
  *
  * Two ways to sample:
@@ -48,6 +48,7 @@ export declare class Noise {
     curl3(x: number, y: number, z: number, out: Vec3): Vec3;
     warp2(x: number, y: number, strength: number, out: Vec2): Vec2;
     fillField2<T extends Float32Array | Float64Array>(out: T, w: number, h: number, opts?: FillField2Options): T;
+    tileableField2<T extends Float32Array | Float64Array>(out: T, w: number, h: number, opts: TileableField2Options): T;
 }
 
 /**
@@ -222,4 +223,50 @@ export declare function fillField2<T extends Float32Array | Float64Array>(
     w: number,
     h: number,
     opts?: FillField2Options,
+): T;
+
+/**
+ * Options for `tileableField2`. `periodX` and `periodY` are REQUIRED (a tile
+ * needs a positive extent); the rest are optional with the defaults shown.
+ * Reading uses `opts?.x ?? default` so no allocation on the read path.
+ */
+export interface TileableField2Options {
+    /** Per-octave shaping. `'fbm'` signed, `'ridged'` `(1-|n|)^2`, `'billow'` `|n|*2-1`. Default `'fbm'`. */
+    model?: 'fbm' | 'ridged' | 'billow';
+    /** Tile width in noise space. REQUIRED, must be > 0 (a non-positive value throws). */
+    periodX: number;
+    /** Tile height in noise space. REQUIRED, must be > 0 (a non-positive value throws). */
+    periodY: number;
+    /** Octaves summed at harmonic periods. Must be >= 1 for a non-zero field. Default 4. */
+    octaves?: number;
+    /** Per-octave period/frequency multiplier. Default 2.0 (the value the exact seam is proven at). */
+    lacunarity?: number;
+    /** Per-octave amplitude decay. Default 0.5. */
+    gain?: number;
+    /** Base-frequency zoom (scales coordinate and tile period together, seam preserved). Default 1. */
+    scale?: number;
+    /** X coordinate at column 0. Default 0. A non-zero value shifts the tile off the exact seam. */
+    ox?: number;
+    /** Y coordinate at row 0. Default 0. A non-zero value shifts the tile off the exact seam. */
+    oy?: number;
+    /** Remap the baked field to exact [0, 1] in a second in-place pass. Default false. */
+    normalize?: boolean;
+}
+
+/**
+ * Bake a seamless, multifractal `w * h` field into a caller-supplied TypedArray
+ * — the tileable sibling of `fillField2`. Opposite field edges wrap with exact
+ * `===` (not epsilon) for `lacunarity === 2` (the default). Sums octaves of
+ * `tileable2` at harmonic periods; the per-cell coordinate is computed by
+ * multiply so the seam lands exactly. Zero allocation once options are read.
+ *
+ * Fail closed at setup, before `out` is written: an unknown `model` throws a
+ * RangeError, and `periodX <= 0` or `periodY <= 0` throws. `opts` (with its
+ * required `periodX`/`periodY`) is mandatory.
+ */
+export declare function tileableField2<T extends Float32Array | Float64Array>(
+    out: T,
+    w: number,
+    h: number,
+    opts: TileableField2Options,
 ): T;

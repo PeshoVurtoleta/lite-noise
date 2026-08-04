@@ -15,13 +15,17 @@ import { build } from 'esbuild';
 import { gzipSync } from 'node:zlib';
 import { readFileSync, unlinkSync } from 'node:fs';
 
-const CEILING = 2560;                  // bytes, min+gz — self-contained, zero deps.
+const CEILING = 2816;                  // bytes, min+gz — self-contained, zero deps.
 // Rose from 2048 with v1.3.0: ridged2, billow2, noiseLoop, tileable2 (+ the
 // fillField2 `normalize` pass). ridged2/billow2 are one-line wrappers over a
 // shared `_octaves2` skeleton (that share is why two multifractals cost far less
 // than two copies of the octave loop), but noiseLoop and especially tileable2's
-// four-sample blend are genuinely new code. Measured 2,291 B min+gz; 2.5 KiB is
-// the deliberate new bound, recorded in CHANGELOG [1.3.0]. ~269 B headroom.
+// four-sample blend are genuinely new code. Measured 2,291 B min+gz at v1.3.0.
+// Rose 2,560 -> 2,816 with v1.5.0: tileableField2 is a genuinely new double-loop
+// bake (harmonic-octave sum over _tileable2, three-model shaping, fail-closed
+// setup, normalize pass) the octave skeleton can't absorb -- it sums _tileable2,
+// not _simplex2. Measured 2,733 B min+gz; 2,816 is the deliberate new bound,
+// recorded in CHANGELOG [1.5.0]. ~83 B headroom.
 const OUT = 'test-bundle.js';
 
 await build({

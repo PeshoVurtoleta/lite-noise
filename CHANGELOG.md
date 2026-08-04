@@ -2,6 +2,30 @@
 
 All notable changes to `@zakkster/lite-noise`.
 
+## [1.5.0] — 2026-08-04
+
+**N5** — the tileable multifractal field. One new function, `tileableField2`, the seamless sibling of `fillField2`: it bakes a whole `w * h` field whose opposite edges wrap with exact `===`, not epsilon. The seven pre-existing determinism goldens are **unchanged** — no existing kernel moved.
+
+### Added
+
+- **`tileableField2(out, w, h, opts)`** (module function + `Noise.prototype.tileableField2`) — bake a seamless, multifractal 2D field into a caller-supplied `Float32Array`/`Float64Array`. Sums octaves of `tileable2` at **harmonic periods** (octave `k` at period `periodX * lac^k`, amplitude `gain^k`), so the multifractal detail is itself seamless. The per-cell coordinate is `ox + x*(periodX/w)` computed by **multiply, not row-accumulation** — accumulation drifts and would land the seam column a few ULPs off `periodX`, breaking the exact wrap; the multiply lands it bit-exact. Because `tileable2`'s edge identity is algebraic (`tileable2(0, .) === tileable2(period, .)`), the whole summed field wraps with `===` for `lacunarity === 2` (the default), proven across all rows and columns for all three models.
+  - **Models** (`opts.model`, per-octave shaping): `fbm` signed (~[-1, 1]); `ridged` `(1 - |n|)²` (~[0, 1], sharp creases); `billow` `|n|*2 - 1` (~[-1, 1], folded).
+  - **Fail closed at setup, before `out` is touched**: an unknown `model` throws a `RangeError` naming the bad value and the valid set; `periodX <= 0` or `periodY <= 0` (or an omitted required period) throws (a degenerate tile is a caller error, the same positive-period precondition `tileable2` states, made explicit for the field API). `periodX`/`periodY` are **required**.
+  - `opts` (guarded `opts?.x ?? default` reads, no `opts = {}`, so no allocation on the read path): `octaves = 4, lacunarity = 2, gain = 0.5, scale = 1, ox = 0, oy = 0, normalize = false`. `normalize: true` reuses `fillField2`'s two-pass exact-[0, 1] remap (no temp buffer). Zero allocation once options are read.
+- **`TileableField2Options`** type in `Noise.d.ts`; both signatures (module + instance).
+- **Three committed determinism goldens** (seed 42, 64×64, period 4, octaves 4, lacunarity 2, gain 0.5): `fbm → 8f34c3b8`, `ridged → e117b1a8`, `billow → b5d78012`. Wired into `npm run goldens`; a test asserts byte-identity across two `node` processes and module-fn vs instance.
+- **Test coverage** — exact `===` seam (origin column vs an `ox = periodX` re-bake, and `oy = periodY` for rows; zero tolerance, all 3 models, all 64 rows/columns), naive-loop parity (4096/4096 cells vs a per-cell `tileable2` octave loop), per-model range character, the fail-closed throws, `normalize`, and a `seamlessScore` cross-check.
+
+### Changed
+
+- **Bundle ceiling raised 2,560 → 2,816 B** (measured **2,733 B min+gz**), deliberately, for `tileableField2`. Unlike `ridged2`/`billow2` (one-line wrappers over the `_octaves2` skeleton), `tileableField2` is a genuinely new double-loop bake that sums **`_tileable2`, not `_simplex2`**, so the octave skeleton cannot absorb it. `bundle-check` still externalises nothing — zero runtime dependencies hold. ~83 B headroom.
+- **Torture harness** extended: T6 gates the new bake path (module + instance, all 3 models + the `normalize` pass) as a heavy bake (major-GC + `arrayBuffers`, like `fillField2`); T0 imports the new export.
+- Version stamped 1.5.0 across `package.json`, the `Noise.js`/`Noise.d.ts` headers, and `llms.txt`.
+
+### seamlessScore cross-check (honest note)
+
+`@zakkster/lite-patternforge`'s `seamlessScore` is a dev-only cross-check. It compares edge **columns** directly, so a full-bleed multifractal texture floors at its own per-pixel contrast (more octaves = more contrast) — the field therefore scores slightly **higher** (0.014–0.026 at 256 px, period 4) than a single-octave `tileable2` (0.012) despite an algebraically identical seam, the same caveat already documented for `tileable2`. A "field ≥ tileable2 seamlessness" gate is therefore **not meaningful**; the direction-correct gate used instead is vs the **non-tileable** `fbm2` field (ratio ~0.10–0.17, i.e. the tile scores < 0.25× the untiled field). The unconditional proof is the exact `===` wrap.
+
 ## [1.4.0] — 2026-08-03
 
 **N4** — ecosystem seams. Three runnable, CI-tested integration recipes proving lite-noise composes with its neighbors, adding **zero runtime dependency** (the peers are dev-only, and every published range/behavior is unchanged). No new exports; no change to `Noise.js` runtime code.

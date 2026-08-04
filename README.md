@@ -26,11 +26,12 @@ It gives you:
 - 🌀 Curl noise (2D and 3D) for smoke, fluid, and volumetric particle movement
 - 🌀 Quilez-style domain warping over FBM
 - 🗺️ `fillField2` — bake a Float32Array heightfield in one call, row-incremental coord stepping, optional `normalize` to [0,1]
+- 🧵 `tileableField2` — bake a whole **seamless multifractal** field (`fbm`/`ridged`/`billow`) whose opposite edges wrap with exact `===`, not epsilon
 - 🎲 Seeded via an inlined Mulberry32 PRNG (deterministic, reproducible, **zero runtime dependencies**)
 - 0️⃣ Zero allocation in any hot-path function (unrolled FBM, no rest/spread, no per-cell object synthesis)
 - 🧹 Caller-owned output for `curl2` / `curl3` / `warp2` (no shared reference bugs)
 - 🛡️ Zero-alloc claim made falsifiable via `@zakkster/lite-gc-profiler` gates (`npm run torture`)
-- 🪶 ~2.24 KB minified + gzipped, self-contained (zero dependencies; measured by `npm run bundle-check`)
+- 🪶 ~2.67 KB minified + gzipped, self-contained (zero dependencies; measured by `npm run bundle-check`)
 
 Part of the [@zakkster/lite-*](https://www.npmjs.com/org/zakkster) ecosystem — micro-libraries built for deterministic, cache-friendly game development.
 
@@ -51,7 +52,7 @@ import {
     noiseLoop, tileable2,
     curl2, curl3,
     warp2,
-    fillField2,
+    fillField2, tileableField2,
 } from '@zakkster/lite-noise';
 
 // Seed for reproducibility
@@ -70,6 +71,10 @@ const tile = tileable2(u * 4, v * 4, 4, 4);  // wraps edge-to-edge
 // v1.1.0: bake a heightfield in one call, zero allocation
 const heightmap = new Float32Array(256 * 256);
 fillField2(heightmap, 256, 256, { scale: 0.01, octaves: 6 });
+
+// v1.5.0: bake a SEAMLESS multifractal field — edges wrap with exact ===
+const tileField = new Float32Array(256 * 256);
+tileableField2(tileField, 256, 256, { model: 'fbm', periodX: 4, periodY: 4, octaves: 6 });
 
 // v1.1.0: Quilez-style domain warp → richer procedural art per byte
 const warped = { x: 0, y: 0 };
@@ -143,7 +148,7 @@ Every sampler below exists twice: as a module function sharing one table, and as
 - `createNoise(seed?) → Noise` — an independent noise field owning its own permutation table. The way to run two consumers without collision.
 - `new Noise(seed?)` — the class behind `createNoise`, exported for `instanceof` / typing.
 - `noise.seed(seed) → this` — re-seed an instance in place; affects only that instance.
-- `noise.simplex2 / simplex3 / fbm2 / fbm3 / ridged2 / billow2 / noiseLoop / tileable2 / curl2 / curl3 / warp2 / fillField2` — instance methods mirroring the module functions below.
+- `noise.simplex2 / simplex3 / fbm2 / fbm3 / ridged2 / billow2 / noiseLoop / tileable2 / curl2 / curl3 / warp2 / fillField2 / tileableField2` — instance methods mirroring the module functions below.
 
 ### Scalar samplers
 
@@ -165,6 +170,7 @@ Every sampler below exists twice: as a module function sharing one table, and as
 ### Field bake
 
 - `fillField2(out, w, h, opts?) → out` — bake a `w × h` FBM heightfield into a caller-supplied `Float32Array` / `Float64Array`. `opts` (all optional): `scale`, `octaves`, `lacunarity`, `gain`, `ox`, `oy`, `normalize`. Row-incremental coord stepping (no per-cell multiplies), zero allocation. The raw fill is amplitude-normalised but ~`[-0.84, 0.82]` at the defaults; `normalize: true` does a second in-place pass to exact `[0, 1]` (a colour ramp usually wants this). `out` is caller-owned and written start-to-end — don't alias it with anything read during the call.
+- `tileableField2(out, w, h, opts) → out` — bake a **seamless, multifractal** `w × h` field into a caller-supplied `Float32Array` / `Float64Array`. Opposite field edges wrap with exact `===` (not epsilon) for `lacunarity === 2` (the default): it sums octaves of `tileable2` at harmonic periods and computes the per-cell coordinate by multiply so the seam column lands exactly on `periodX`. `opts`: `model` (`'fbm'` \| `'ridged'` \| `'billow'`, default `'fbm'`), **required** `periodX`/`periodY` (`> 0`), plus optional `octaves`, `lacunarity`, `gain`, `scale`, `ox`, `oy`, `normalize`. **Fails closed at setup, before `out` is written:** an unknown `model` throws a `RangeError` naming the valid set, and `periodX <= 0` or `periodY <= 0` (or an omitted required period) throws. Zero allocation once options are read; `normalize: true` remaps to exact `[0, 1]` as in `fillField2`.
 
 ### Seed
 
@@ -172,7 +178,7 @@ Every sampler below exists twice: as a module function sharing one table, and as
 
 ## 🛡️ Zero-GC — falsifiable, not asserted
 
-The zero-allocation claim on every hot path (`simplex2`, `simplex3`, `fbm2`, `fbm3`, `ridged2`, `billow2`, `noiseLoop`, `tileable2`, `curl2`, `curl3`, `warp2`, and the `fillField2` bakes incl. `normalize`) — across **both** the module functions and the instance methods — is gated by [`@zakkster/lite-gc-profiler`](https://www.npmjs.com/package/@zakkster/lite-gc-profiler):
+The zero-allocation claim on every hot path (`simplex2`, `simplex3`, `fbm2`, `fbm3`, `ridged2`, `billow2`, `noiseLoop`, `tileable2`, `curl2`, `curl3`, `warp2`, and the `fillField2` / `tileableField2` bakes incl. `normalize`) — across **both** the module functions and the instance methods — is gated by [`@zakkster/lite-gc-profiler`](https://www.npmjs.com/package/@zakkster/lite-gc-profiler):
 
 ```bash
 npm run torture
@@ -191,6 +197,7 @@ Point samplers use `measureOps` / `checkOps` with `stabilize: true` so heap delt
 - 128×128 `billow2` → `acf96355`
 - 64×64 period-4 `tileable2` → `b6d00662`
 - 720-sample `noiseLoop` → `2cfa58f8`
+- 64×64 period-4 `tileableField2` `fbm` → `8f34c3b8`, `ridged` → `e117b1a8`, `billow` → `b5d78012`
 
 Any change to those numbers is a breaking change and requires a CHANGELOG entry. Regenerate via `npm run goldens` when the change is intentional.
 

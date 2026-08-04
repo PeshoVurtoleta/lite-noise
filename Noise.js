@@ -1,5 +1,5 @@
 /**
- * @zakkster/lite-noise v1.4.0
+ * @zakkster/lite-noise v1.5.0
  *
  * Zero-GC seeded Simplex 2D/3D + FBM + ridged/billow multifractals + seamless
  * loop + tileable field + curl2 + curl3 + domain warp + bakeable heightfields.
@@ -328,6 +328,115 @@ function _fillField2(perm, out, w, h, opts) {
     return out;
 }
 
+// Model string -> int mode for _tileableField2. Decoded ONCE at setup (before
+// the loop), so the hot inner body branches on a small int, never re-parses a
+// string per cell. `undefined` for an unknown key is the fail-closed signal.
+const _TF2_MODELS = { fbm: 0, ridged: 1, billow: 2 };
+
+// Seamless, multifractal, zero-alloc field fill -- the structural sibling of
+// _fillField2. Where _fillField2 bakes a raw fbm2 heightfield, this bakes a
+// TILEABLE one: opposite field edges wrap with `===`, not epsilon.
+//
+// Seam algebra. Per-octave it sums _tileable2 at HARMONIC periods -- octave k
+// samples `_tileable2(px * f, py * f, periodX * f, periodY * f)` with f = lac^k
+// and amplitude gain^k, mirroring _octaves2's frequency/amplitude walk. The
+// per-cell coordinate is computed by MULTIPLY (`px = ox + x*(periodX/w)`), NOT
+// by row-accumulation like _fillField2's `px += scale`: accumulation drifts and
+// would land the seam column a few ULPs off `periodX`, breaking both naive-loop
+// parity AND the exact wrap. Because _tileable2's edge identity is algebraic
+// (tileable2(0, .) === tileable2(period, .)), and at x = w the coordinate
+// `w*(periodX/w)` lands EXACTLY on periodX (hence px*f === periodX*f, the octave
+// period argument, bit-for-bit), every octave's two seam samples are identical
+// and the summed field wraps with `===`. Holds for lacunarity = 2 (the default)
+// and any config where the seam column maps exactly onto periodX.
+//
+// Model shaping (applied per octave -- a deterministic function of the octave
+// sample, so both seam columns transform identically and the wrap stays exact):
+//   fbm    (0) signed pass-through            -> ~[-1, 1]
+//   ridged (1) (1 - |n|)^2, matching ridged2  -> ~[0, 1], creases at zero-cross
+//   billow (2) |n|*2 - 1                       -> ~[-1, 1], folded
+//
+// Fail closed at SETUP, before `out` is touched: an unknown model throws a
+// RangeError naming the bad value and the valid set; a non-positive periodX or
+// periodY throws too (division / a degenerate tile is a caller error, the same
+// positive-period precondition tileable2 states, made explicit for the field
+// API). periodX/periodY are REQUIRED -- there is no sensible default tile size.
+function _tileableField2(perm, out, w, h, opts) {
+    // Guarded reads -- same optional-chaining, no-`opts = {}` discipline as
+    // _fillField2 (zero-alloc whether opts is undefined, null, or an object).
+    const model      = opts?.model      ?? 'fbm';
+    const periodX    = opts?.periodX    ?? NaN;
+    const periodY    = opts?.periodY    ?? NaN;
+    const octaves    = opts?.octaves    ?? 4;
+    const lacunarity = opts?.lacunarity ?? 2.0;
+    const gain       = opts?.gain       ?? 0.5;
+    const scale      = opts?.scale      ?? 1.0;
+    const ox         = opts?.ox         ?? 0;
+    const oy         = opts?.oy         ?? 0;
+    const normalize  = opts?.normalize  ?? false;
+
+    const mode = _TF2_MODELS[model];
+    if (mode === undefined) {
+        throw new RangeError(
+            "lite-noise: tileableField2 unknown model '" + model +
+            "' -- expected 'fbm', 'ridged', or 'billow'");
+    }
+    // `!(p > 0)` also rejects NaN (an omitted required period) and -0/Infinity.
+    if (!(periodX > 0) || !(periodY > 0)) {
+        throw new RangeError(
+            'lite-noise: tileableField2 requires periodX > 0 and periodY > 0 (got ' +
+            periodX + ', ' + periodY + ')');
+    }
+
+    // `scale` zooms the base frequency AND the tile period in lockstep, so the
+    // seam stays exact (it is equivalent to scaling periodX/periodY; provided
+    // for opts parity with _fillField2). Default 1 is a no-op.
+    const stepX = periodX / w;
+    const stepY = periodY / h;
+    let idx = 0;
+    for (let y = 0; y < h; y++) {
+        const py = oy + y * stepY;
+        for (let x = 0; x < w; x++) {
+            const px = ox + x * stepX;
+            let amplitude = 1.0;
+            let frequency = scale;
+            let total = 0.0;
+            let maxAmp = 0.0;
+            for (let k = 0; k < octaves; k++) {
+                let s = _tileable2(perm,
+                    px * frequency, py * frequency,
+                    periodX * frequency, periodY * frequency);
+                if (mode === 1) { s = 1 - (s < 0 ? -s : s); s *= s; }  // ridged
+                else if (mode === 2) { s = (s < 0 ? -s : s) * 2 - 1; } // billow
+                total += s * amplitude;
+                maxAmp += amplitude;
+                amplitude *= gain;
+                frequency *= lacunarity;
+            }
+            // Same maxAmp normalisation + `maxAmp ? ... : 0` degenerate guard as
+            // _octaves2: octaves <= 0 yields 0, never NaN from a 0/0 divide.
+            out[idx++] = maxAmp ? total / maxAmp : 0;
+        }
+    }
+
+    // Optional exact-[0,1] remap, identical two-pass scalar min/max as
+    // _fillField2: allocation-free, no temp buffer, constant field -> all-zero.
+    if (normalize) {
+        const n = w * h;
+        let mn = Infinity, mx = -Infinity;
+        for (let i = 0; i < n; i++) {
+            const v = out[i];
+            if (v < mn) mn = v;
+            if (v > mx) mx = v;
+        }
+        const range = mx - mn;
+        const inv = range > 0 ? 1 / range : 0;
+        for (let i = 0; i < n; i++) out[i] = (out[i] - mn) * inv;
+    }
+
+    return out;
+}
+
 // -- Instance API --
 
 /**
@@ -375,6 +484,7 @@ export class Noise {
     curl3(x, y, z, out) { return _curl3(this._perm, x, y, z, out); }
     warp2(x, y, strength, out) { return _warp2(this._perm, x, y, strength, out); }
     fillField2(out, w, h, opts) { return _fillField2(this._perm, out, w, h, opts); }
+    tileableField2(out, w, h, opts) { return _tileableField2(this._perm, out, w, h, opts); }
 }
 
 /**
@@ -547,3 +657,34 @@ export function warp2(x, y, strength, out) { return _warp2(_perm, x, y, strength
  * @returns {Float32Array|Float64Array} The same `out` reference.
  */
 export function fillField2(out, w, h, opts) { return _fillField2(_perm, out, w, h, opts); }
+
+/**
+ * Bake a seamless, multifractal 2D field into a caller-supplied TypedArray --
+ * the tileable sibling of `fillField2`. Opposite field edges wrap with exact
+ * `===` (not epsilon): a cell at column 0 and the sample at the period boundary
+ * are bit-identical, across every row and column, for `lacunarity === 2` (the
+ * default) and any config whose seam column maps exactly onto `periodX`.
+ *
+ * Sums octaves of `tileable2` at harmonic periods (octave k at period
+ * `periodX * lac^k`, amplitude `gain^k`), so the multifractal detail is itself
+ * seamless. The per-cell coordinate is `ox + x*(periodX/w)` by multiply -- not
+ * row-accumulated -- so the seam lands exactly.
+ *
+ * Models (per-octave shaping): `fbm` signed (~[-1,1]); `ridged` `(1-|n|)^2`
+ * (~[0,1], sharp creases); `billow` `|n|*2-1` (~[-1,1], folded).
+ *
+ * Fail closed at setup, before `out` is written: an unknown `model` throws a
+ * RangeError, and `periodX <= 0` or `periodY <= 0` throws (a degenerate tile is
+ * a caller error). `periodX` and `periodY` are REQUIRED.
+ *
+ * `out` is caller-owned and written start-to-end; it must not alias `opts` or
+ * any live view you read during the call. Zero allocation once options are read.
+ * @param {Float32Array|Float64Array} out Destination, `length >= w * h`.
+ * @param {number} w
+ * @param {number} h
+ * @param {{ model?: 'fbm'|'ridged'|'billow', periodX: number, periodY: number,
+ *           octaves?: number, lacunarity?: number, gain?: number, scale?: number,
+ *           ox?: number, oy?: number, normalize?: boolean }} opts
+ * @returns {Float32Array|Float64Array} The same `out` reference.
+ */
+export function tileableField2(out, w, h, opts) { return _tileableField2(_perm, out, w, h, opts); }

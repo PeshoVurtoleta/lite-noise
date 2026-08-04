@@ -1,9 +1,9 @@
-# @zakkster/lite-noise v1.4.0
+# @zakkster/lite-noise v1.5.0
 
 > Zero-GC seeded Simplex 2D/3D noise, unrolled FBM, ridged/billow multifractals,
-> seamless loop, tileable field, curl2, curl3, Quilez-style domain warp, and
-> bakeable heightfields. Deterministic.
-> Single-file ESM, ~2.24 KB min+gz, zero runtime dependencies.
+> seamless loop, tileable point + multifractal field, curl2, curl3, Quilez-style
+> domain warp, and bakeable heightfields. Deterministic.
+> Single-file ESM, ~2.67 KB min+gz, zero runtime dependencies.
 
 ## Install
 npm i @zakkster/lite-noise
@@ -18,7 +18,7 @@ import {
     noiseLoop, tileable2,
     curl2, curl3,
     warp2,
-    fillField2,
+    fillField2, tileableField2,
 } from '@zakkster/lite-noise';
 
 ## API
@@ -31,7 +31,7 @@ import {
     The class behind createNoise; exported for instanceof / typing.
 - noise.seed(seed): this
     Re-seed an instance in place. Affects only that instance.
-- noise.simplex2/simplex3/fbm2/fbm3/ridged2/billow2/noiseLoop/tileable2/curl2/curl3/warp2/fillField2
+- noise.simplex2/simplex3/fbm2/fbm3/ridged2/billow2/noiseLoop/tileable2/curl2/curl3/warp2/fillField2/tileableField2
     Instance methods mirroring the module functions below. An instance at seed S
     is byte-identical to the module functions after seedNoise(S).
 
@@ -112,6 +112,30 @@ import {
     a constant field maps to all-zero. `out` is caller-owned and written
     start-to-end -- do not alias it with anything read during the call.
 
+- tileableField2(out, w, h, opts): out    [v1.5.0]
+    The tileable, multifractal sibling of fillField2. Bakes a SEAMLESS w * h
+    field into a caller-supplied Float32Array or Float64Array (length >= w * h):
+    opposite field edges wrap with exact `===`, not epsilon. Sums octaves of
+    tileable2 at harmonic periods (octave k at period periodX * lac^k, amplitude
+    gain^k), so the multifractal detail is itself seamless. The per-cell
+    coordinate is `ox + x*(periodX/w)` by multiply (NOT row-accumulated), so the
+    seam column lands EXACTLY on periodX -- proven bit-exact for lacunarity = 2
+    (the default) across all rows and columns, all 3 models.
+    opts (periodX / periodY are REQUIRED and must be > 0; the rest optional,
+    guarded so no allocation on the read path):
+      model = 'fbm' | 'ridged' | 'billow'  (default 'fbm')
+        fbm    signed pass-through          -> ~[-1, 1]
+        ridged (1 - |n|)^2 per octave       -> ~[0, 1], sharp creases
+        billow |n|*2 - 1 per octave         -> ~[-1, 1], folded
+      periodX, periodY  noise-space tile period, > 0, REQUIRED
+      octaves = 4, lacunarity = 2, gain = 0.5, scale = 1, ox = 0, oy = 0,
+      normalize = false
+    Fail closed at SETUP, before out is written: an unknown model throws a
+    RangeError naming the valid set; periodX <= 0 or periodY <= 0 (or an omitted
+    required period) throws (a degenerate tile is a caller error, matching
+    tileable2's positive-period precondition). Zero allocation once options read.
+    normalize = true does the same second-pass exact-[0, 1] remap as fillField2.
+
 ## Key facts
 
 - Seeded via an inlined Mulberry32 PRNG — deterministic permutation table, zero runtime dependencies.
@@ -181,6 +205,9 @@ FNV-1a 32-bit over Float32 bytes:
 - 128x128 billow2             -> acf96355    [v1.3.0]
 - 64x64 period-4 tileable2    -> b6d00662    [v1.3.0]
 - 720-sample noiseLoop        -> 2cfa58f8    [v1.3.0]
+- 64x64 period-4 tileableField2 fbm    -> 8f34c3b8    [v1.5.0]
+- 64x64 period-4 tileableField2 ridged -> e117b1a8    [v1.5.0]
+- 64x64 period-4 tileableField2 billow -> b5d78012    [v1.5.0]
 
 Any change to a golden is a breaking change and must be called out in
 CHANGELOG.md. Regenerate: `npm run goldens`.
@@ -199,11 +226,13 @@ make the gate exit non-zero -- proof it can bite. A real leak crosses both bars.
 
 ## Bundle budget
 
-~2.24 KB minified + gzipped (2,291 B), self-contained with zero runtime
+~2.67 KB minified + gzipped (2,733 B), self-contained with zero runtime
 dependencies, enforced via `npm run bundle-check` (esbuild --minify,
-nothing externalised; ceiling 2,560 B). ridged2/billow2 share the octave
-skeleton with fbm2 (via `_octaves2`); noiseLoop and tileable2 are new code.
-New variants must share the skeleton or they don't ship.
+nothing externalised; ceiling 2,816 B). ridged2/billow2 share the octave
+skeleton with fbm2 (via `_octaves2`); noiseLoop, tileable2, and tileableField2
+(a harmonic-octave sum over _tileable2 -- it sums _tileable2, not _simplex2,
+so the octave skeleton can't absorb it) are new code. The ceiling rose
+2,560 -> 2,816 with v1.5.0 for tileableField2; see CHANGELOG [1.5.0].
 
 ## Usage sketches
 

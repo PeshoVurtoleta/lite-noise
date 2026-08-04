@@ -1,6 +1,6 @@
 {
   "name": "@zakkster/lite-noise",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Zero-GC seeded Simplex 2D/3D noise, unrolled FBM, ridged/billow multifractals, seamless loop, tileable field, curl2, curl3, domain warp, and bakeable heightfields. Deterministic via seeded permutation table.",
   "author": "Zahary Shinikchiev <shinikchiev@yahoo.com>",
   "license": "MIT",

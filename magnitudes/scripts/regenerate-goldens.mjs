@@ -3,7 +3,7 @@
 // Run this only when the underlying kernel deliberately changes.
 //   node scripts/regenerate-goldens.mjs
 
-import { seedNoise, fbm2, warp2, curl3, fillField2, createNoise } from '../../Noise.js';
+import { seedNoise, fbm2, warp2, curl3, fillField2, tileableField2, createNoise } from '../../Noise.js';
 
 function fnv1a(bytes) {
     let h = 0x811c9dc5;
@@ -82,4 +82,17 @@ seedNoise(42);
     const lf = new Float32Array(720);
     for (let k = 0; k < 720; k++) lf[k] = n.noiseLoop(k / 720 * Math.PI * 2, 1.5);
     console.log('GOLDEN_LOOP_HASH   =', fnv1a(new Uint8Array(lf.buffer)).toString(16));
+}
+
+// v1.5.0 goldens -- tileableField2, 64x64, periodX=periodY=4, octaves=4,
+// lacunarity=2, gain=0.5, one per model, via the MODULE functions after
+// seedNoise(42) (instance == module at the same seed).
+seedNoise(42);
+{
+    for (const model of ['fbm', 'ridged', 'billow']) {
+        const f = new Float32Array(64 * 64);
+        tileableField2(f, 64, 64, { model, periodX: 4, periodY: 4, octaves: 4, lacunarity: 2, gain: 0.5 });
+        const tag = 'GOLDEN_TF2_' + model.toUpperCase();
+        console.log(tag.padEnd(18) + '=', fnv1a(new Uint8Array(f.buffer)).toString(16));
+    }
 }
