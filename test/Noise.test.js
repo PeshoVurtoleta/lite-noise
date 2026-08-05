@@ -423,16 +423,15 @@ describe('lite-noise: tileableField2', () => {
         return maxAmp ? total / maxAmp : 0;
     }
 
-    // --- Exact seam (zero tolerance) -----------------------------------------
-    // The unconditional seamlessness proof, matching tileable2's exact-wrap test.
-    // The field's column 0 (ox = 0 -> px = 0) is byte-identical to the sample at
-    // the period boundary. We get the boundary column by re-baking with ox =
-    // periodX (so column 0 now samples px = periodX): tileable2(0) === tileable2
-    // (periodX) per octave, so the two fields' column 0 must match on EVERY one of
-    // the 64 rows. The vertical seam is the same with oy. Zero tolerance, Float64
-    // backing (no fround), all 3 models. A regression to an epsilon seam trips
-    // this where seamlessScore (contrast-floored) would not.
-    it('wraps EXACTLY at the period boundary for every model (rows + columns, zero tolerance)', () => {
+    // --- Sampler-wrap identity (zero tolerance) ------------------------------
+    // Proves the ALGEBRAIC mechanism the field inherits: baking the boundary
+    // column via ox = periodX forces px = periodX exactly, and tileable2(0) ===
+    // tileable2(periodX) per octave, so the two fields' column 0 match on every
+    // row. This is exact by construction and independent of the grid -- it does
+    // NOT prove the real tiled-buffer wrap (where the boundary column sits at
+    // ox = w*stepX, which equals periodX only on a GRID-ALIGNED bake). That
+    // stronger, alignment-dependent property is the next test.
+    it('sampler-wrap identity holds for every model (ox=periodX, rows + columns, zero tolerance)', () => {
         const n = createNoise(42);
         const W = 64, H = 64, P = 4;
         for (const model of MODELS) {
@@ -451,6 +450,66 @@ describe('lite-noise: tileableField2', () => {
                 assert.strictEqual(origin[0 * W + x], shiftedY[0 * W + x],
                     `${model}: vertical seam open at col ${x}`);
             }
+        }
+    });
+
+    // --- REAL tiled-buffer wrap: exact iff grid-aligned ----------------------
+    // The seam a caller actually tiles is between the last baked column (x=w-1,
+    // coord (w-1)*stepX) and the next tile's column 0 (coord w*stepX), stepX =
+    // periodX/w. It wraps bit-exact IFF w*(periodX/w) === periodX in float64 --
+    // i.e. GRID-ALIGNED (power-of-two width + integer period). We bake the true
+    // "column w" via ox = w*stepX and compare to column 0. This DISCRIMINATES
+    // where the ox=periodX test above cannot: a non-aligned grid shows an epsilon
+    // seam here (~1e-14), not ===. That boundary is the documented precondition.
+    function realSeamGap(n, W, H, P, model) {
+        const stepX = P / W;
+        const origin = new Float64Array(W * H);
+        const nextCol = new Float64Array(H); // the single column at x = w
+        n.tileableField2(origin, W, H, { model, periodX: P, periodY: P, octaves: 4 });
+        n.tileableField2(nextCol, 1, H, { model, periodX: P, periodY: P, octaves: 4, ox: W * stepX });
+        let maxGap = 0;
+        for (let y = 0; y < H; y++) {
+            const g = Math.abs(origin[y * W + 0] - nextCol[y]);
+            if (g > maxGap) maxGap = g;
+        }
+        return maxGap;
+    }
+
+    it('real tiled-buffer wrap is bit-exact (===) on GRID-ALIGNED dims, every model', () => {
+        const n = createNoise(42);
+        for (const [W, P] of [[64, 4], [8, 16], [128, 2]]) {
+            assert.strictEqual(W * (P / W), P, `precondition: ${W}/${P} must be grid-aligned`);
+            for (const model of MODELS) {
+                assert.strictEqual(realSeamGap(n, W, W, P, model), 0,
+                    `${model}: aligned ${W}/${P} tiled seam not exact`);
+            }
+        }
+    });
+
+    it('real tiled-buffer wrap is epsilon (NOT ===) on NON-aligned dims -- documents the precondition', () => {
+        const n = createNoise(42);
+        // 7*(29/7) !== 29 in float64: the seam column lands a few ULPs off periodX.
+        assert.notStrictEqual(7 * (29 / 7), 29, 'sanity: 7/29 must be non-grid-aligned');
+        const gap = realSeamGap(n, 7, 7, 29, 'fbm');
+        assert.ok(gap > 0, 'non-aligned seam should NOT be bit-exact (that is the whole point)');
+        assert.ok(gap < 1e-12, `non-aligned seam should still be within float epsilon, got ${gap}`);
+    });
+
+    it('a non-zero ox/oy breaks the tiled wrap -- the seam holds only at the tile origin', () => {
+        const n = createNoise(42);
+        // ox/oy exist for fillField2 parity, but shift the sampling window off the
+        // tile origin: the exact seam holds ONLY at ox=oy=0. Even a whole-period
+        // offset breaks it OUTRIGHT (not epsilon). Pin so a "ox preserves the seam"
+        // regression (in code or docs) trips here.
+        const W = 64, H = 64, P = 4, stepX = P / W;
+        assert.strictEqual(realSeamGap(n, W, H, P, 'fbm'), 0, 'ox=0 default must be exact');
+        for (const ox of [P, 2 * P, 1.3]) {
+            const a = new Float64Array(W * H), b = new Float64Array(H);
+            n.tileableField2(a, W, H, { model: 'fbm', periodX: P, periodY: P, octaves: 4, ox });
+            n.tileableField2(b, 1, H, { model: 'fbm', periodX: P, periodY: P, octaves: 4, ox: ox + W * stepX });
+            let g = 0;
+            for (let y = 0; y < H; y++) { const d = Math.abs(a[y * W] - b[y]); if (d > g) g = d; }
+            assert.ok(g > 1e-6, `ox=${ox} should break the seam outright, got gap ${g}`);
         }
     });
 
@@ -509,6 +568,11 @@ describe('lite-noise: tileableField2', () => {
         assert.throws(() => n.tileableField2(out, 4, 4, { periodX: 4, periodY: -1 }), RangeError);
         assert.throws(() => n.tileableField2(out, 4, 4, { periodX: 4 }), RangeError); // periodY missing
         assert.throws(() => n.tileableField2(out, 4, 4, {}), RangeError);             // both missing
+        // Non-finite periods must ALSO throw, not silently bake an all-NaN field:
+        // Infinity passes `> 0`, so the guard requires Number.isFinite too.
+        assert.throws(() => n.tileableField2(out, 4, 4, { periodX: Infinity, periodY: 4 }), RangeError);
+        assert.throws(() => n.tileableField2(out, 4, 4, { periodX: 4, periodY: Infinity }), RangeError);
+        assert.throws(() => n.tileableField2(out, 4, 4, { periodX: NaN, periodY: 4 }), RangeError);
         // out untouched -- the fail-closed checks precede the fill.
         for (let i = 0; i < out.length; i++) assert.strictEqual(out[i], 7, 'out was written despite a setup throw');
     });
@@ -576,8 +640,8 @@ describe('lite-noise: tileableField2', () => {
     });
 
     // --- seamlessScore cross-check (patternforge, dev-only) -------------------
-    // The unconditional seam proof is the exact `===` wrap above. seamlessScore
-    // is the calibrated sibling cross-check. Note it compares edge COLUMNS, so a
+    // The primary proof is the bit-exact `===` tiled-buffer wrap on grid-aligned
+    // dims above. seamlessScore is the calibrated sibling cross-check. Note it compares edge COLUMNS, so a
     // full-bleed multifractal texture floors at its own per-pixel contrast (more
     // octaves = more contrast), which is why the field scores slightly HIGHER than
     // a single-octave tileable2 despite an algebraically identical seam -- the same
@@ -602,6 +666,154 @@ describe('lite-noise: tileableField2', () => {
             n.tileableField2(f, W, W, { model, periodX: P, periodY: P });
             const tiled = seamlessScore(fieldMotif(f), W, W).overall;
             assert.ok(tiled < raw * 0.25, `${model} field (${tiled.toFixed(4)}) not markedly better than raw fbm2 (${raw.toFixed(4)})`);
+        }
+    });
+
+    // --- BOUNDARY: exact seam holds off the happy-path shape too --------------
+    // The shipped seam test fixes W=H=64, P=4 (integer, square). Re-run the same
+    // exact-`===` proof (origin column/row vs a re-bake shifted by one full
+    // period) across non-integer periods, non-square w!=h, and the 1xN / Nx1 /
+    // 1x1 degenerate sizes -- every axis, every model. A wrap that only held at
+    // the one shape shipped would be vacuous; this is the discriminating re-run.
+    it('BOUNDARY exact seam holds for non-integer periods, non-square fields, and 1xN/Nx1/1x1', () => {
+        const n = createNoise(42);
+        function seamCheck(model, W, H, periodX, periodY) {
+            const base = { model, periodX, periodY, octaves: 4, lacunarity: 2, gain: 0.5 };
+            const origin = new Float64Array(W * H);
+            const shiftedX = new Float64Array(W * H);
+            const shiftedY = new Float64Array(W * H);
+            n.tileableField2(origin, W, H, base);
+            n.tileableField2(shiftedX, W, H, { ...base, ox: periodX });
+            n.tileableField2(shiftedY, W, H, { ...base, oy: periodY });
+            for (let y = 0; y < H; y++) {
+                assert.strictEqual(origin[y * W + 0], shiftedX[y * W + 0],
+                    `${model} ${W}x${H} P=${periodX},${periodY}: horizontal seam open at row ${y}`);
+            }
+            for (let x = 0; x < W; x++) {
+                assert.strictEqual(origin[0 * W + x], shiftedY[0 * W + x],
+                    `${model} ${W}x${H} P=${periodX},${periodY}: vertical seam open at col ${x}`);
+            }
+        }
+        for (const model of MODELS) {
+            seamCheck(model, 32, 32, 3.7, 3.7);   // non-integer period
+            seamCheck(model, 17, 53, 4, 6);       // non-square, non-equal periods
+            seamCheck(model, 1, 40, 4, 4);        // 1xN
+            seamCheck(model, 40, 1, 4, 4);        // Nx1
+            seamCheck(model, 1, 1, 4, 4);         // 1x1 degenerate
+        }
+    });
+
+    // --- BOUNDARY: fail-closed matrix ------------------------------------------
+    it('BOUNDARY periodX/periodY: 0, negative, NaN, and -0 all throw; non-integer does not', () => {
+        const n = createNoise(42);
+        const out = new Float32Array(16);
+        assert.throws(() => n.tileableField2(out, 4, 4, { periodX: 0, periodY: 4 }), RangeError, 'periodX=0');
+        assert.throws(() => n.tileableField2(out, 4, 4, { periodX: 4, periodY: 0 }), RangeError, 'periodY=0');
+        assert.throws(() => n.tileableField2(out, 4, 4, { periodX: -1, periodY: 4 }), RangeError, 'periodX=-1');
+        assert.throws(() => n.tileableField2(out, 4, 4, { periodX: 4, periodY: -1 }), RangeError, 'periodY=-1');
+        assert.throws(() => n.tileableField2(out, 4, 4, { periodX: NaN, periodY: 4 }), RangeError, 'periodX=NaN');
+        assert.throws(() => n.tileableField2(out, 4, 4, { periodX: -0, periodY: 4 }), RangeError, 'periodX=-0');
+        assert.throws(() => n.tileableField2(out, 4, 4, { periodX: 4, periodY: -0 }), RangeError, 'periodY=-0');
+        // A non-integer positive period is a legitimate tile size -- must NOT throw.
+        assert.doesNotThrow(() => n.tileableField2(out, 4, 4, { periodX: 3.5, periodY: 2.25 }),
+            'a fractional positive period is a valid tile size');
+    });
+
+    it('BOUNDARY w=0 / h=0 is a no-op: out is left untouched, no throw', () => {
+        const n = createNoise(42);
+        const out = new Float32Array(16);
+        out.fill(7);
+        n.tileableField2(out, 0, 4, { periodX: 4, periodY: 4 });
+        n.tileableField2(out, 4, 0, { periodX: 4, periodY: 4 });
+        for (let i = 0; i < out.length; i++) assert.strictEqual(out[i], 7, `w=0/h=0 wrote cell ${i}`);
+    });
+
+    it('BOUNDARY out shorter than w*h truncates silently (matches fillField2 precedent), never throws or corrupts beyond its own length', () => {
+        const n = createNoise(42);
+        const full = new Float32Array(16);
+        n.tileableField2(full, 4, 4, { periodX: 4, periodY: 4 });
+        const short = new Float32Array(8);
+        assert.doesNotThrow(() => n.tileableField2(short, 4, 4, { periodX: 4, periodY: 4 }));
+        for (let i = 0; i < short.length; i++) {
+            assert.strictEqual(short[i], full[i], `cell ${i} diverged from the full bake`);
+        }
+    });
+
+    // --- BOUNDARY: model range contract -----------------------------------------
+    // Per the shipped doc comment: fbm ~[-1,1] signed; ridged (1-|n|)^2 is
+    // non-negative and reaches near 1; billow |n|*2-1 is documented ~[-1,1]
+    // FOLDED (it does NOT match [0,1] -- that is the plain-abs billow2 sibling's
+    // range, a different transform under the same model name). Assert the
+    // documented contract, not the more common billow convention.
+    it('BOUNDARY model ranges match the documented per-model transform, at scale', () => {
+        const n = createNoise(42);
+        const W = 256, H = 256;
+        function stats(model) {
+            const f = new Float32Array(W * H);
+            n.tileableField2(f, W, H, { model, periodX: 4, periodY: 4, octaves: 6, gain: 0.5 });
+            let mn = Infinity, mx = -Infinity;
+            for (let i = 0; i < f.length; i++) { if (f[i] < mn) mn = f[i]; if (f[i] > mx) mx = f[i]; }
+            return { mn, mx };
+        }
+        const fbm = stats('fbm'), ridged = stats('ridged'), billow = stats('billow');
+        assert.ok(fbm.mn >= -1.01 && fbm.mx <= 1.01, `fbm out of ~[-1,1]: [${fbm.mn}, ${fbm.mx}]`);
+        assert.ok(ridged.mn >= -1e-6 && ridged.mx <= 1.01, `ridged out of ~[0,1]: [${ridged.mn}, ${ridged.mx}]`);
+        // Documented contract: billow is ~[-1,1] (folded), NOT [0,1].
+        assert.ok(billow.mn < -0.5, `billow did not fold near -1 as documented: min ${billow.mn}`);
+        assert.ok(billow.mx <= 1.01, `billow exceeded its documented ~[-1,1] ceiling: max ${billow.mx}`);
+    });
+
+    it('BOUNDARY negative gain leaves the documented range (inherited _octaves2 caveat)', () => {
+        const n = createNoise(42);
+        const W = 128, H = 128;
+        const f = new Float32Array(W * H);
+        n.tileableField2(f, W, H, { model: 'fbm', periodX: 4, periodY: 4, octaves: 4, gain: -0.5 });
+        let mn = Infinity, mx = -Infinity;
+        for (let i = 0; i < f.length; i++) { if (f[i] < mn) mn = f[i]; if (f[i] > mx) mx = f[i]; }
+        assert.ok(mn < -1.01 || mx > 1.01, `negative gain unexpectedly stayed in [-1,1]: [${mn}, ${mx}]`);
+    });
+
+    it('BOUNDARY octaves=0 (constant field) normalizes to all-zero, never NaN', () => {
+        const n = createNoise(42);
+        const W = 16, H = 16;
+        const out = new Float32Array(W * H);
+        out.fill(-9);
+        n.tileableField2(out, W, H, { periodX: 4, periodY: 4, octaves: 0, normalize: true });
+        for (let i = 0; i < out.length; i++) assert.strictEqual(out[i], 0, `octaves=0 cell ${i} not exactly 0`);
+    });
+
+    it('BOUNDARY normalize hits the [0, 1] endpoints bit-exactly, not just within tolerance', () => {
+        const n = createNoise(42);
+        const W = 96, H = 96;
+        const out = new Float32Array(W * H);
+        n.tileableField2(out, W, H, { model: 'fbm', periodX: 4, periodY: 4, normalize: true });
+        let mn = Infinity, mx = -Infinity;
+        for (let i = 0; i < out.length; i++) { if (out[i] < mn) mn = out[i]; if (out[i] > mx) mx = out[i]; }
+        assert.strictEqual(mn, 0, `normalize min not bit-exact 0: ${mn}`);
+        assert.strictEqual(mx, 1, `normalize max not bit-exact 1: ${mx}`);
+    });
+
+    it('BOUNDARY Float64Array target works and is byte-identical to a Float32-widened bake at the values that survive rounding', () => {
+        const n = createNoise(42);
+        const W = 16, H = 16;
+        const out64 = new Float64Array(W * H);
+        assert.doesNotThrow(() => n.tileableField2(out64, W, H, { periodX: 4, periodY: 4 }));
+        let finiteCount = 0;
+        for (let i = 0; i < out64.length; i++) if (Number.isFinite(out64[i])) finiteCount++;
+        assert.strictEqual(finiteCount, out64.length, 'Float64Array target produced a non-finite cell');
+    });
+
+    it('BOUNDARY module==instance holds off the golden shape too (non-square, period not a divisor of w/h, all 3 models)', () => {
+        seedNoise(7);
+        const inst = createNoise(7);
+        const W = 13, H = 29, P = 5;
+        for (const model of MODELS) {
+            const fm = new Float32Array(W * H), fi = new Float32Array(W * H);
+            tileableField2(fm, W, H, { model, periodX: P, periodY: P, octaves: 3, gain: 0.6 });
+            inst.tileableField2(fi, W, H, { model, periodX: P, periodY: P, octaves: 3, gain: 0.6 });
+            for (let i = 0; i < fm.length; i++) {
+                assert.strictEqual(fm[i], fi[i], `${model}: module!=instance at cell ${i}`);
+            }
         }
     });
 });

@@ -1,4 +1,4 @@
-# @zakkster/lite-noise v1.5.0
+# @zakkster/lite-noise v1.5.1
 
 > Zero-GC seeded Simplex 2D/3D noise, unrolled FBM, ridged/billow multifractals,
 > seamless loop, tileable point + multifractal field, curl2, curl3, Quilez-style
@@ -115,25 +115,32 @@ import {
 - tileableField2(out, w, h, opts): out    [v1.5.0]
     The tileable, multifractal sibling of fillField2. Bakes a SEAMLESS w * h
     field into a caller-supplied Float32Array or Float64Array (length >= w * h):
-    opposite field edges wrap with exact `===`, not epsilon. Sums octaves of
-    tileable2 at harmonic periods (octave k at period periodX * lac^k, amplitude
-    gain^k), so the multifractal detail is itself seamless. The per-cell
-    coordinate is `ox + x*(periodX/w)` by multiply (NOT row-accumulated), so the
-    seam column lands EXACTLY on periodX -- proven bit-exact for lacunarity = 2
-    (the default) across all rows and columns, all 3 models.
+    opposite field edges wrap seamlessly. Sums octaves of tileable2 at harmonic
+    periods (octave k at period periodX * lac^k, amplitude gain^k), so the
+    multifractal detail is itself seamless. The per-cell coordinate is
+    `ox + x*(periodX/w)` by multiply (NOT row-accumulated).
+    EXACT-WRAP PRECONDITION: the wrap is bit-exact (===) when the grid is
+    aligned -- `w*(periodX/w) === periodX` in float64 (likewise h/periodY), i.e.
+    a power-of-two width with an integer period (the safe seamless recipe). For
+    non-aligned dims (e.g. w=7, periodX=29) the seam is seamless only to within
+    float epsilon (~1e-14), not ===. Grid alignment alone governs this -- NOT
+    lacunarity/gain (exact at lac 2.5/3 too). Holds for all 3 models.
     opts (periodX / periodY are REQUIRED and must be > 0; the rest optional,
     guarded so no allocation on the read path):
       model = 'fbm' | 'ridged' | 'billow'  (default 'fbm')
         fbm    signed pass-through          -> ~[-1, 1]
         ridged (1 - |n|)^2 per octave       -> ~[0, 1], sharp creases
         billow |n|*2 - 1 per octave         -> ~[-1, 1], folded
-      periodX, periodY  noise-space tile period, > 0, REQUIRED
+      periodX, periodY  noise-space tile period, finite and > 0, REQUIRED
       octaves = 4, lacunarity = 2, gain = 0.5, scale = 1, ox = 0, oy = 0,
       normalize = false
+      NOTE ox/oy: keep 0 for a seamless tile. Any non-zero offset (even a
+      whole-period multiple) shifts the window off the tile origin and breaks
+      the wrap OUTRIGHT, not by epsilon. Provided for fillField2 opts parity.
     Fail closed at SETUP, before out is written: an unknown model throws a
-    RangeError naming the valid set; periodX <= 0 or periodY <= 0 (or an omitted
-    required period) throws (a degenerate tile is a caller error, matching
-    tileable2's positive-period precondition). Zero allocation once options read.
+    RangeError naming the valid set; a non-finite or non-positive periodX/periodY
+    -- including Infinity, NaN, or an omitted required period -- throws (a
+    degenerate tile is a caller error). Zero allocation once options read.
     normalize = true does the same second-pass exact-[0, 1] remap as fillField2.
 
 ## Key facts

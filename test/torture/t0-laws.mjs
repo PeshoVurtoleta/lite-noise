@@ -15,6 +15,8 @@
  *   L8 tile wrap        tileable2 opposite edges are byte-identical (seamless by
  *                       construction, resolution-free)
  *   L9 ridged/billow    both live in ~[0,1]; degenerate octaves fall to 0
+ *   L10 tileableField2  grid-aligned real-buffer wrap is byte-identical (all 3
+ *                       models); non-finite/non-positive period throws
  */
 
 import {
@@ -168,5 +170,33 @@ export function run() {
         check(n.billow2(1.7, 2.3, 0) === 0, () => 'T0.L9: billow2 octaves=0 not 0');
         check(n.ridged2(1.7, 2.3, -3) === 0, () => 'T0.L9: ridged2 octaves<0 not 0');
         check(n.billow2(1.7, 2.3, -3) === 0, () => 'T0.L9: billow2 octaves<0 not 0');
+    }
+
+    // L10 -- tileableField2 grid-aligned wrap + fail-closed. On a GRID-ALIGNED
+    // bake (w*(periodX/w) === periodX), the REAL tiled seam -- column 0 vs the
+    // next tile's column 0 baked at ox = w*stepX -- is byte-identical for every
+    // model. And a non-finite or non-positive period must THROW, not bake a
+    // silent all-NaN field (the Infinity guard, added in 1.5.1).
+    {
+        const n = createNoise(9);
+        const W = 32, H = 32, P = 4;          // 32*(4/32) === 4: grid-aligned
+        const stepX = P / W;
+        check(W * stepX === P, () => 'T0.L10: test dims not grid-aligned');
+        for (const model of ['fbm', 'ridged', 'billow']) {
+            const origin = new Float64Array(W * H);
+            const nextCol = new Float64Array(H);
+            n.tileableField2(origin, W, H, { model, periodX: P, periodY: P, octaves: 4 });
+            n.tileableField2(nextCol, 1, H, { model, periodX: P, periodY: P, octaves: 4, ox: W * stepX });
+            for (let y = 0; y < H; y++) {
+                check(origin[y * W] === nextCol[y],
+                    () => `T0.L10: tileableField2 ${model} tiled seam open at row ${y}`);
+            }
+        }
+        const bad = new Float32Array(16);
+        for (const p of [Infinity, 0, -1, NaN]) {
+            let threw = false;
+            try { n.tileableField2(bad, 4, 4, { periodX: p, periodY: 4 }); } catch (e) { threw = true; }
+            check(threw, () => `T0.L10: tileableField2 periodX=${p} did not throw (silent bad bake)`);
+        }
     }
 }

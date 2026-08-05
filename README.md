@@ -26,7 +26,7 @@ It gives you:
 - 🌀 Curl noise (2D and 3D) for smoke, fluid, and volumetric particle movement
 - 🌀 Quilez-style domain warping over FBM
 - 🗺️ `fillField2` — bake a Float32Array heightfield in one call, row-incremental coord stepping, optional `normalize` to [0,1]
-- 🧵 `tileableField2` — bake a whole **seamless multifractal** field (`fbm`/`ridged`/`billow`) whose opposite edges wrap with exact `===`, not epsilon
+- 🧵 `tileableField2` — bake a whole **seamless multifractal** field (`fbm`/`ridged`/`billow`) whose opposite edges wrap seamlessly (bit-exact `===` on a grid-aligned bake — power-of-two width + integer period)
 - 🎲 Seeded via an inlined Mulberry32 PRNG (deterministic, reproducible, **zero runtime dependencies**)
 - 0️⃣ Zero allocation in any hot-path function (unrolled FBM, no rest/spread, no per-cell object synthesis)
 - 🧹 Caller-owned output for `curl2` / `curl3` / `warp2` (no shared reference bugs)
@@ -72,7 +72,8 @@ const tile = tileable2(u * 4, v * 4, 4, 4);  // wraps edge-to-edge
 const heightmap = new Float32Array(256 * 256);
 fillField2(heightmap, 256, 256, { scale: 0.01, octaves: 6 });
 
-// v1.5.0: bake a SEAMLESS multifractal field — edges wrap with exact ===
+// v1.5.0: bake a SEAMLESS multifractal field. Grid-aligned here (256 is a power
+// of two, period 4 is an integer) so opposite edges wrap bit-exact (===).
 const tileField = new Float32Array(256 * 256);
 tileableField2(tileField, 256, 256, { model: 'fbm', periodX: 4, periodY: 4, octaves: 6 });
 
@@ -170,7 +171,7 @@ Every sampler below exists twice: as a module function sharing one table, and as
 ### Field bake
 
 - `fillField2(out, w, h, opts?) → out` — bake a `w × h` FBM heightfield into a caller-supplied `Float32Array` / `Float64Array`. `opts` (all optional): `scale`, `octaves`, `lacunarity`, `gain`, `ox`, `oy`, `normalize`. Row-incremental coord stepping (no per-cell multiplies), zero allocation. The raw fill is amplitude-normalised but ~`[-0.84, 0.82]` at the defaults; `normalize: true` does a second in-place pass to exact `[0, 1]` (a colour ramp usually wants this). `out` is caller-owned and written start-to-end — don't alias it with anything read during the call.
-- `tileableField2(out, w, h, opts) → out` — bake a **seamless, multifractal** `w × h` field into a caller-supplied `Float32Array` / `Float64Array`. Opposite field edges wrap with exact `===` (not epsilon) for `lacunarity === 2` (the default): it sums octaves of `tileable2` at harmonic periods and computes the per-cell coordinate by multiply so the seam column lands exactly on `periodX`. `opts`: `model` (`'fbm'` \| `'ridged'` \| `'billow'`, default `'fbm'`), **required** `periodX`/`periodY` (`> 0`), plus optional `octaves`, `lacunarity`, `gain`, `scale`, `ox`, `oy`, `normalize`. **Fails closed at setup, before `out` is written:** an unknown `model` throws a `RangeError` naming the valid set, and `periodX <= 0` or `periodY <= 0` (or an omitted required period) throws. Zero allocation once options are read; `normalize: true` remaps to exact `[0, 1]` as in `fillField2`.
+- `tileableField2(out, w, h, opts) → out` — bake a **seamless, multifractal** `w × h` field into a caller-supplied `Float32Array` / `Float64Array`. It sums octaves of `tileable2` at harmonic periods and computes the per-cell coordinate by multiply. **Exact-wrap precondition:** opposite edges wrap bit-exact (`===`) when the grid is aligned — `w * (periodX/w) === periodX` in float64, i.e. a **power-of-two width with an integer period** (the safe seamless recipe); for non-aligned dims the seam is seamless only to within float epsilon (~1e-14). Grid alignment alone governs this — *not* `lacunarity`/`gain`. `opts`: `model` (`'fbm'` \| `'ridged'` \| `'billow'`, default `'fbm'`), **required** `periodX`/`periodY`, plus optional `octaves`, `lacunarity`, `gain`, `scale`, `ox`, `oy`, `normalize`. **Fails closed at setup, before `out` is written:** an unknown `model` throws a `RangeError` naming the valid set, and a non-finite or non-positive `periodX`/`periodY` (including an omitted required period, or `Infinity`) throws. Zero allocation once options are read; `normalize: true` remaps to exact `[0, 1]` as in `fillField2`.
 
 ### Seed
 

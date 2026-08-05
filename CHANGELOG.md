@@ -2,6 +2,23 @@
 
 All notable changes to `@zakkster/lite-noise`.
 
+## [1.5.1] — 2026-08-05
+
+`tileableField2` correctness patch — an adversarial audit found one silent-wrong-answer and one over-claimed guarantee. No change to the baked field for any valid, grid-aligned bake (the three goldens `8f34c3b8` / `e117b1a8` / `b5d78012` are unchanged); this corrects a guard and the documented contract.
+
+### Fixed
+
+- **`tileableField2` now fails closed on a non-finite period.** `periodX`/`periodY` of `Infinity` passed the `> 0` guard and silently baked an **all-NaN field** — despite the guard's own comment claiming it rejected `Infinity`. The guard now requires `Number.isFinite(period) && period > 0`, so `Infinity` (and NaN, 0, negatives, an omitted required period) throws a `RangeError` before `out` is touched. (A finite-but-absurd period can still overflow to `Infinity` across octaves via `period * lacunarity^k`; that is documented as a caller error.)
+
+### Changed
+
+- **The exact-`===` wrap guarantee is scoped honestly to grid-aligned bakes.** The wrap is bit-exact only when `w * (periodX/w) === periodX` in float64 (likewise `h`/`periodY`) — i.e. a **power-of-two width with an integer period** (the safe seamless recipe). For non-aligned dims (e.g. `w=7, periodX=29`) the seam is seamless only to within float epsilon (~1e-14), not `===`. The prior docs (`README`, `llms.txt`, the kernel comment) claimed exact-`===` unconditionally and attributed it to `lacunarity === 2`; the real condition is **grid alignment alone** (exact at lacunarity 2.5/3 too). The `.d.ts`, README, llms.txt, and kernel comment now state the precondition; no code behavior changed for aligned bakes.
+
+### Tests
+
+- **Discriminating seam test.** The shipped exact-seam test baked the boundary column via `ox = periodX`, which proves the *sampler* wrap (exact by algebra) but never the *real tiled-buffer* wrap (boundary column at `ox = w*stepX`, which equals `periodX` only when aligned) — it passed even where the real buffer seam is epsilon. Added a test that measures the real tiled-buffer wrap: **bit-exact on grid-aligned dims (all 3 models), within-epsilon on a non-aligned case (`w=7, P=29`)** — pinning the precondition boundary. Renamed the old test to name it as the sampler-wrap identity.
+- Added `Infinity`/`NaN` period fail-closed assertions; added a **T0 law (L10)** for the grid-aligned real-buffer wrap + the non-finite-period throw (the `tileableField2` import in T0 was previously unused); gated **`instance.tileableField2(normalize)`** in T6 (module variant was gated, instance was not).
+
 ## [1.5.0] — 2026-08-04
 
 **N5** — the tileable multifractal field. One new function, `tileableField2`, the seamless sibling of `fillField2`: it bakes a whole `w * h` field whose opposite edges wrap with exact `===`, not epsilon. The seven pre-existing determinism goldens are **unchanged** — no existing kernel moved.

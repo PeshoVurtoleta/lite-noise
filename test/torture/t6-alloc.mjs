@@ -116,6 +116,7 @@ export function run() {
     bakeGate('instance.tileableField2(fbm)', () => { n.tileableField2(field, 64, 64, TF2_FBM); });
     bakeGate('instance.tileableField2(ridged)', () => { n.tileableField2(field, 64, 64, TF2_RIDGED); });
     bakeGate('instance.tileableField2(billow)', () => { n.tileableField2(field, 64, 64, TF2_BILLOW); });
+    bakeGate('instance.tileableField2(normalize)', () => { n.tileableField2(field, 64, 64, TF2_NORM); });
 
     // --- Construction allocates exactly one table -----------------------------
     // Warm the constructor so class/shape feedback is settled, then measure the

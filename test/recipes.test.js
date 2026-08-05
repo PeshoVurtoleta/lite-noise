@@ -122,6 +122,23 @@ describe('recipe: curl2 -> lite-particles advection', () => {
         // The default path (maxParticles defaults to count) never truncates.
         assert.doesNotThrow(() => createCurlFlow({ count: 100, seed: 1 }));
     });
+
+    it('BOUNDARY maxParticles === count (explicit, not defaulted) does not throw', () => {
+        // The exact boundary: an explicit maxParticles equal to count is a full,
+        // non-truncated pool -- must construct cleanly, not be treated as "not
+        // enough room".
+        let flow;
+        assert.doesNotThrow(() => { flow = createCurlFlow({ count: 500, maxParticles: 500, seed: 1 }); });
+        assert.strictEqual(flow.emitter.pool.size, 500);
+        assert.strictEqual(flow.emitter.pool.used, 500);
+    });
+
+    it('BOUNDARY maxParticles > count (headroom above the request) does not throw', () => {
+        let flow;
+        assert.doesNotThrow(() => { flow = createCurlFlow({ count: 100, maxParticles: 500, seed: 1 }); });
+        assert.strictEqual(flow.emitter.pool.size, 500, 'pool should keep the larger requested capacity');
+        assert.strictEqual(flow.emitter.pool.used, 100, 'only count particles should be spawned, not maxParticles');
+    });
 });
 
 describe('recipe: fillField2 -> lite-gl field (the bit-exact seam)', () => {
@@ -345,8 +362,15 @@ describe('no runtime dependency added', () => {
 describe('BOUNDARY packaging contract (N4)', () => {
     const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
-    it('is stamped 1.5.0', () => {
-        assert.strictEqual(pkg.version, '1.5.0');
+    it('version agrees across package.json, the Noise.js header, and llms.txt', () => {
+        // Packaging law: the version lives in >1 place and they move together.
+        // Assert agreement, not a hardcoded literal (which breaks every bump).
+        const v = pkg.version;
+        assert.match(v, /^\d+\.\d+\.\d+$/, `bad semver: ${v}`);
+        const src = readFileSync(new URL('../Noise.js', import.meta.url), 'utf8');
+        const llms = readFileSync(new URL('../llms.txt', import.meta.url), 'utf8');
+        assert.ok(src.includes(`@zakkster/lite-noise v${v}`), `Noise.js header != ${v}`);
+        assert.ok(llms.includes(`@zakkster/lite-noise v${v}`), `llms.txt header != ${v}`);
     });
 
     it('files[] excludes examples/ and test/ -- the tarball never ships the recipes', () => {

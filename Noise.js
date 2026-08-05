@@ -1,5 +1,5 @@
 /**
- * @zakkster/lite-noise v1.5.0
+ * @zakkster/lite-noise v1.5.1
  *
  * Zero-GC seeded Simplex 2D/3D + FBM + ridged/billow multifractals + seamless
  * loop + tileable field + curl2 + curl3 + domain warp + bakeable heightfields.
@@ -335,20 +335,25 @@ const _TF2_MODELS = { fbm: 0, ridged: 1, billow: 2 };
 
 // Seamless, multifractal, zero-alloc field fill -- the structural sibling of
 // _fillField2. Where _fillField2 bakes a raw fbm2 heightfield, this bakes a
-// TILEABLE one: opposite field edges wrap with `===`, not epsilon.
+// TILEABLE one: opposite field edges wrap seamlessly, and EXACTLY (`===`) when
+// the grid is aligned (precondition below).
 //
 // Seam algebra. Per-octave it sums _tileable2 at HARMONIC periods -- octave k
 // samples `_tileable2(px * f, py * f, periodX * f, periodY * f)` with f = lac^k
 // and amplitude gain^k, mirroring _octaves2's frequency/amplitude walk. The
 // per-cell coordinate is computed by MULTIPLY (`px = ox + x*(periodX/w)`), NOT
 // by row-accumulation like _fillField2's `px += scale`: accumulation drifts and
-// would land the seam column a few ULPs off `periodX`, breaking both naive-loop
-// parity AND the exact wrap. Because _tileable2's edge identity is algebraic
-// (tileable2(0, .) === tileable2(period, .)), and at x = w the coordinate
-// `w*(periodX/w)` lands EXACTLY on periodX (hence px*f === periodX*f, the octave
-// period argument, bit-for-bit), every octave's two seam samples are identical
-// and the summed field wraps with `===`. Holds for lacunarity = 2 (the default)
-// and any config where the seam column maps exactly onto periodX.
+// would land the seam column a few ULPs off `periodX`, breaking naive-loop parity.
+//
+// EXACT-WRAP PRECONDITION. _tileable2's edge identity is algebraic
+// (tileable2(0, .) === tileable2(period, .)), so the baked field wraps with
+// `===` exactly when the seam column maps onto periodX bit-for-bit -- i.e. when
+// `w * (periodX / w) === periodX` in float64 (and likewise `h`/`periodY`). That
+// holds for GRID-ALIGNED dims: a power-of-two width with an integer period is
+// the safe seamless recipe. For NON-aligned dims (e.g. w=7, periodX=29) the
+// coordinate at x = w lands a few ULPs off periodX, so the seam is seamless only
+// to within float epsilon (~1e-14), not `===`. The wrap is a function of grid
+// alignment ALONE -- lacunarity and gain do not affect it.
 //
 // Model shaping (applied per octave -- a deterministic function of the octave
 // sample, so both seam columns transform identically and the wrap stays exact):
@@ -381,10 +386,15 @@ function _tileableField2(perm, out, w, h, opts) {
             "lite-noise: tileableField2 unknown model '" + model +
             "' -- expected 'fbm', 'ridged', or 'billow'");
     }
-    // `!(p > 0)` also rejects NaN (an omitted required period) and -0/Infinity.
-    if (!(periodX > 0) || !(periodY > 0)) {
+    // Fail closed: each period must be FINITE and > 0. `!(p > 0)` rejects NaN
+    // (an omitted required period), 0, and negatives; the isFinite guard also
+    // rejects +Infinity -- which passes `> 0` and would otherwise bake a silent
+    // all-NaN field. (A finite-but-absurd period can still overflow to Infinity
+    // once scaled by lacunarity^k across octaves; that is a caller error.)
+    if (!(periodX > 0 && Number.isFinite(periodX)) ||
+        !(periodY > 0 && Number.isFinite(periodY))) {
         throw new RangeError(
-            'lite-noise: tileableField2 requires periodX > 0 and periodY > 0 (got ' +
+            'lite-noise: tileableField2 requires finite periodX > 0 and periodY > 0 (got ' +
             periodX + ', ' + periodY + ')');
     }
 
@@ -660,22 +670,32 @@ export function fillField2(out, w, h, opts) { return _fillField2(_perm, out, w, 
 
 /**
  * Bake a seamless, multifractal 2D field into a caller-supplied TypedArray --
- * the tileable sibling of `fillField2`. Opposite field edges wrap with exact
- * `===` (not epsilon): a cell at column 0 and the sample at the period boundary
- * are bit-identical, across every row and column, for `lacunarity === 2` (the
- * default) and any config whose seam column maps exactly onto `periodX`.
+ * the tileable sibling of `fillField2`. Opposite field edges wrap seamlessly.
+ *
+ * Exact-wrap precondition: the wrap is bit-exact (`===`) when the grid is
+ * ALIGNED -- `w*(periodX/w) === periodX` in float64 (likewise `h`/`periodY`),
+ * i.e. a power-of-two width with an integer period (the safe seamless recipe).
+ * For non-aligned dims (e.g. `w=7, periodX=29`) the seam column lands a few ULPs
+ * off `periodX`, so the seam is seamless only to within float epsilon (~1e-14),
+ * not `===`. Grid alignment ALONE governs this -- not `lacunarity`/`gain`.
+ *
+ * The exact wrap also assumes `ox === 0 && oy === 0` (the default): a non-zero
+ * offset shifts the sampling window off the tile origin and breaks the wrap
+ * outright (not epsilon -- even a whole-period offset). `ox`/`oy` exist for
+ * API parity with `fillField2`; for a seamless tile, leave them 0.
  *
  * Sums octaves of `tileable2` at harmonic periods (octave k at period
  * `periodX * lac^k`, amplitude `gain^k`), so the multifractal detail is itself
  * seamless. The per-cell coordinate is `ox + x*(periodX/w)` by multiply -- not
- * row-accumulated -- so the seam lands exactly.
+ * row-accumulated -- so the grid step does not drift.
  *
  * Models (per-octave shaping): `fbm` signed (~[-1,1]); `ridged` `(1-|n|)^2`
  * (~[0,1], sharp creases); `billow` `|n|*2-1` (~[-1,1], folded).
  *
  * Fail closed at setup, before `out` is written: an unknown `model` throws a
- * RangeError, and `periodX <= 0` or `periodY <= 0` throws (a degenerate tile is
- * a caller error). `periodX` and `periodY` are REQUIRED.
+ * RangeError, and a non-finite or non-positive `periodX`/`periodY` -- including
+ * an omitted required period, `Infinity`, or `NaN` -- throws. `periodX` and
+ * `periodY` are REQUIRED.
  *
  * `out` is caller-owned and written start-to-end; it must not alias `opts` or
  * any live view you read during the call. Zero allocation once options are read.

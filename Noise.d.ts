@@ -1,5 +1,5 @@
 /**
- * @zakkster/lite-noise v1.5.0 — Zero-GC seeded Simplex + FBM + ridged/billow +
+ * @zakkster/lite-noise v1.5.1 — Zero-GC seeded Simplex + FBM + ridged/billow +
  * seamless loop + tileable field + curl + warp.
  *
  * Two ways to sample:
@@ -233,21 +233,21 @@ export declare function fillField2<T extends Float32Array | Float64Array>(
 export interface TileableField2Options {
     /** Per-octave shaping. `'fbm'` signed, `'ridged'` `(1-|n|)^2`, `'billow'` `|n|*2-1`. Default `'fbm'`. */
     model?: 'fbm' | 'ridged' | 'billow';
-    /** Tile width in noise space. REQUIRED, must be > 0 (a non-positive value throws). */
+    /** Tile width in noise space. REQUIRED, must be finite and > 0 (non-finite/zero/negative throws). */
     periodX: number;
-    /** Tile height in noise space. REQUIRED, must be > 0 (a non-positive value throws). */
+    /** Tile height in noise space. REQUIRED, must be finite and > 0 (non-finite/zero/negative throws). */
     periodY: number;
     /** Octaves summed at harmonic periods. Must be >= 1 for a non-zero field. Default 4. */
     octaves?: number;
-    /** Per-octave period/frequency multiplier. Default 2.0 (the value the exact seam is proven at). */
+    /** Per-octave period/frequency multiplier. Default 2.0. Does NOT affect the seam (grid alignment governs the exact wrap). */
     lacunarity?: number;
     /** Per-octave amplitude decay. Default 0.5. */
     gain?: number;
     /** Base-frequency zoom (scales coordinate and tile period together, seam preserved). Default 1. */
     scale?: number;
-    /** X coordinate at column 0. Default 0. A non-zero value shifts the tile off the exact seam. */
+    /** X coordinate at column 0. Default 0. Keep 0 for a seamless tile: ANY non-zero value (even a whole-period multiple) breaks the wrap, not by epsilon. */
     ox?: number;
-    /** Y coordinate at row 0. Default 0. A non-zero value shifts the tile off the exact seam. */
+    /** Y coordinate at row 0. Default 0. Keep 0 for a seamless tile: ANY non-zero value (even a whole-period multiple) breaks the wrap, not by epsilon. */
     oy?: number;
     /** Remap the baked field to exact [0, 1] in a second in-place pass. Default false. */
     normalize?: boolean;
@@ -255,14 +255,19 @@ export interface TileableField2Options {
 
 /**
  * Bake a seamless, multifractal `w * h` field into a caller-supplied TypedArray
- * — the tileable sibling of `fillField2`. Opposite field edges wrap with exact
- * `===` (not epsilon) for `lacunarity === 2` (the default). Sums octaves of
- * `tileable2` at harmonic periods; the per-cell coordinate is computed by
- * multiply so the seam lands exactly. Zero allocation once options are read.
+ * — the tileable sibling of `fillField2`. Opposite field edges wrap seamlessly.
+ * Sums octaves of `tileable2` at harmonic periods; the per-cell coordinate is
+ * computed by multiply. Zero allocation once options are read.
+ *
+ * Exact-wrap precondition: the wrap is bit-exact (`===`) when the grid is
+ * aligned — `w * (periodX / w) === periodX` in float64 (likewise `h`/`periodY`),
+ * i.e. a power-of-two width with an integer period (the safe seamless recipe).
+ * For non-aligned dims the seam is seamless only to within float epsilon
+ * (~1e-14). Grid alignment alone governs this — not `lacunarity`/`gain`.
  *
  * Fail closed at setup, before `out` is written: an unknown `model` throws a
- * RangeError, and `periodX <= 0` or `periodY <= 0` throws. `opts` (with its
- * required `periodX`/`periodY`) is mandatory.
+ * RangeError; a non-finite or non-positive `periodX`/`periodY` (including an
+ * omitted required period, or `Infinity`) throws. `opts` is mandatory.
  */
 export declare function tileableField2<T extends Float32Array | Float64Array>(
     out: T,
