@@ -2,6 +2,24 @@
 
 All notable changes to `@zakkster/lite-noise`.
 
+## [1.5.2] — 2026-08-06
+
+Cold-path only — one new ecosystem recipe plus doc/packaging hygiene. **No runtime code changed**: `Noise.js` is byte-for-byte the same minified output, the three `tileableField2` goldens (`8f34c3b8` / `e117b1a8` / `b5d78012`) are unchanged, and the bundle holds at **2,755 B min+gz** (61 B headroom).
+
+### Added
+
+- **`tileableField2` → `@zakkster/lite-gradient-studio` recipe** ([`examples/tileable-to-gradient.mjs`](examples/tileable-to-gradient.mjs)) — the first real wiring of the v1.5 `tileableField2` feature into its intended consumer. Paints a grid-aligned seamless tile through a gradient LUT (`bakeGradientToLut` → `sampleLut`); because the colour map is a pure per-cell function, the **coloured** tile inherits the field's bit-exact wrap. Proven headless by a **zero colour-seam-gap** on the wrap column (fbm/ridged/billow), the same shape as the `field-to-gl` round-trip proof. The returned RGBA-LE `Uint32Array` is `ImageData`-ready. **Fails closed** (`RangeError`) on a non-grid-aligned bake rather than ship an epsilon-off seam, and (`TypeError`) on a non-`Gradient` colour source. CI-tested in `test/recipes.test.js`; `@zakkster/lite-gradient-studio` added as a **devDependency** (no runtime dep — it installs clean with no peers).
+- **Interactive demo** ([`demo/curl-field.html`](demo/curl-field.html)) — a single-file, no-build A+ demo: five scenes (FLOW curl advection at 100k particles via lite-gl `PointHiSink`, FIELD bakers, SEAM tiling with a live `seamlessScore` gauge, LOOP perfect cycle, N1 isolation proof). Not in `files[]`; dev artifact only.
+
+### Fixed
+
+- **Bundle-size doc drift.** `llms.txt` and `README` still advertised the pre-1.5 figure (`~2.24 KB` / `2,291 B` in the comparison table, `~2.67 KB` in the highlights) — the 1.5.0/1.5.1 growth to **2,755 B (~2.69 KB)** was never propagated. All size claims now track `bundle-check`.
+- **`README.md` added to `package.json` `files[]`** — it was always shipped (npm bundles the readme regardless), but the house law requires it be listed explicitly.
+
+### Tests
+
+- **T7 — the retention gate (`@zakkster/lite-leak`).** The house law names the torture gate as `lite-leak` + `lite-gc-profiler`, but `lite-leak` was never wired (`T6` proved zero-alloc via `arrayBuffers` only — buffer level). New tier `test/torture/t7-leak.mjs` proves the **object-level** complement through a `FinalizationRegistry`: 4096 created-and-dropped `Noise` instances must all be reclaimable (`createNoise` registers them nowhere). It is non-decorative — a positive control first asserts a strongly-held instance is *not* reported collected, so the gate can actually see retention — and deterministic despite async FR callbacks via a bounded force-GC/yield/re-check drain (empties in one round). The torture runner is now `async` to await it; tiers still run strictly sequentially. `lite-leak@^1.8.1` added as a devDependency; this required refreshing the pinned `lite-signal` to `1.7.0-preview.2` (the version exporting `getOwner` that `lite-leak` needs, and which `lite-gl` still resolves against cleanly).
+
 ## [1.5.1] — 2026-08-05
 
 `tileableField2` correctness patch — an adversarial audit found one silent-wrong-answer and one over-claimed guarantee. No change to the baked field for any valid, grid-aligned bake (the three goldens `8f34c3b8` / `e117b1a8` / `b5d78012` are unchanged); this corrects a guard and the documented contract.

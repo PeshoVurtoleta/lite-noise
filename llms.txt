@@ -1,9 +1,9 @@
-# @zakkster/lite-noise v1.5.1
+# @zakkster/lite-noise v1.5.2
 
 > Zero-GC seeded Simplex 2D/3D noise, unrolled FBM, ridged/billow multifractals,
 > seamless loop, tileable point + multifractal field, curl2, curl3, Quilez-style
 > domain warp, and bakeable heightfields. Deterministic.
-> Single-file ESM, ~2.67 KB min+gz, zero runtime dependencies.
+> Single-file ESM, ~2.69 KB min+gz, zero runtime dependencies.
 
 ## Install
 npm i @zakkster/lite-noise
@@ -306,6 +306,12 @@ each recipe holds its own createNoise instance, so two on one page never collide
   advance() physics are CI-tested headless; createAmbientFX(canvas, ...) and the
   draw calls are browser-only. ambient-fx keeps its zero-dep pledge -- recipe,
   not dependency.
+- tileableField2 -> lite-gradient-studio coloured tile (examples/tileable-to-gradient.mjs,
+  v1.5.2). A grid-aligned tileableField2 bake wraps bit-exact; bakeGradientToLut ->
+  sampleLut is a pure per-cell map, so the COLOURED tile inherits the exact wrap.
+  Proven headless by a zero colour-seam-gap on the wrap column (all 3 models); the
+  returned RGBA-LE Uint32Array is ImageData-ready. Fails closed (RangeError) on a
+  non-grid-aligned bake rather than paint an epsilon-off seam.
 - N1 composability, asserted at the integration level: two instance-backed flows
   interleaved in one process produce byte-identical trajectories to each run
   alone.
@@ -313,10 +319,12 @@ each recipe holds its own createNoise instance, so two on one page never collide
 ## Dependencies
 
 - None (production). Seed provenance is an inlined Mulberry32 PRNG.
-- @zakkster/lite-gc-profiler  (dev only, gate on zero-alloc)
+- @zakkster/lite-gc-profiler  (dev only, T6 gate on zero-alloc)
+- @zakkster/lite-leak         (dev only, T7 gate on object-level retention)
 - @zakkster/lite-patternforge (dev only, seamlessScore cross-check for tileable2)
 - @zakkster/lite-particles, @zakkster/lite-gl, @zakkster/lite-ambient-fx
   (dev only, the v1.4.0 ecosystem-seam recipes; no runtime dep added)
+- @zakkster/lite-gradient-studio (dev only, the v1.5.2 tileableField2 colour recipe)
 
 ## Repository
 

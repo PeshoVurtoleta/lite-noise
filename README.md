@@ -31,7 +31,7 @@ It gives you:
 - 0️⃣ Zero allocation in any hot-path function (unrolled FBM, no rest/spread, no per-cell object synthesis)
 - 🧹 Caller-owned output for `curl2` / `curl3` / `warp2` (no shared reference bugs)
 - 🛡️ Zero-alloc claim made falsifiable via `@zakkster/lite-gc-profiler` gates (`npm run torture`)
-- 🪶 ~2.67 KB minified + gzipped, self-contained (zero dependencies; measured by `npm run bundle-check`)
+- 🪶 ~2.69 KB minified + gzipped, self-contained (zero dependencies; measured by `npm run bundle-check`)
 
 Part of the [@zakkster/lite-*](https://www.npmjs.com/org/zakkster) ecosystem — micro-libraries built for deterministic, cache-friendly game development.
 
@@ -136,9 +136,9 @@ Under a single seed and single consumer this is invisible; the moment two consum
 |-----------------|--------------:|:-------:|:-------:|:-------:|:-------:|:-------:|:----------:|:-------:|--------------------------------------|
 | simplex-noise   | ~8 KB         | No      | No      | No      | No      | No      | No         | No      | `npm i simplex-noise`                |
 | noisejs         | ~4 KB         | Yes     | No      | No      | No      | No      | No         | No      | `npm i noisejs`                      |
-| **lite-noise**  | **~2.24 KB**† | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes**    | **Yes** | `npm i @zakkster/lite-noise`         |
+| **lite-noise**  | **~2.69 KB**† | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes**    | **Yes** | `npm i @zakkster/lite-noise`         |
 
-† lite-noise's figure is minified **+ gzipped**, self-contained — the full installed footprint with **zero runtime dependencies** (2,291 B, `npm run bundle-check`). The other libraries' sizes are their published bundle sizes as listed on npm. And this figure buys more: ridged/billow multifractals, seamless `noiseLoop`, and `tileable2` on top of the columns above.
+† lite-noise's figure is minified **+ gzipped**, self-contained — the full installed footprint with **zero runtime dependencies** (2,755 B, `npm run bundle-check`). The other libraries' sizes are their published bundle sizes as listed on npm. And this figure buys more: ridged/billow multifractals, seamless `noiseLoop`, and `tileable2` on top of the columns above.
 
 ## ⚙️ API
 
@@ -209,6 +209,7 @@ Runnable, CI-tested integration recipes live in [`examples/`](examples/) (not sh
 - **`curl2` → `@zakkster/lite-particles`** ([`curl-advection.mjs`](examples/curl-advection.mjs)) — advect particles through a curl flow field. Needs no API from either side: an `onUpdate(p, dt)` hook samples `curl2` into a pre-allocated `{x,y}` and writes `p.vx`/`p.vy`. Both sides are 0 B/call, so the loop is zero-alloc.
 - **`fillField2` → `@zakkster/lite-gl`** ([`field-to-gl.mjs`](examples/field-to-gl.mjs)) — a baked `Float32Array` *is* a GL instance buffer. Packs one `LAYOUT.POINT` per cell (stride 8, and `LAYOUT.POINT === lite-particles POINT_STRIDE`) and proves the handoff with a **bit-exact round-trip**. The live GPU upload/readback is lite-gl's own tested territory.
 - **Curl ambient behavior** ([`ambient-curl.mjs`](examples/ambient-curl.mjs)) — a `registerBehavior('CURL', …)` whose `tick` advances particles through a curl field. Registration + physics are CI-tested headless; the canvas render is browser-only. ambient-fx keeps its zero-dep pledge — a recipe, not a dependency.
+- **`tileableField2` → `@zakkster/lite-gradient-studio`** ([`tileable-to-gradient.mjs`](examples/tileable-to-gradient.mjs)) — paint a seamless tile through a gradient LUT. A grid-aligned `tileableField2` field is bit-exact seamless; `bakeGradientToLut` → `sampleLut` is a pure per-cell map, so the **coloured** tile inherits the exact wrap. Proven headless by a **zero colour-seam-gap** on the wrap column (fbm/ridged/billow); the returned RGBA-LE `Uint32Array` is `ImageData`-ready. The recipe **fails closed** on a non-grid-aligned bake rather than ship an epsilon-off seam.
 
 **N1 composability is asserted at the integration level:** two instance-backed flows interleaved in one process produce byte-identical trajectories to each run alone. `npm test` runs all of this against the installed peers.
 

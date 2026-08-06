@@ -14,7 +14,9 @@
  *     T5  differential fuzz       instance isolation (the NS-01 finding, made
  *                                 executable), reseed reproducibility, module diff
  *     T6  the zero-alloc gate     every hot path (module + instance), one-table
- *                                 construction, 4096-cycle retention
+ *                                 construction, 4096-cycle buffer retention
+ *     T7  the retention gate      dropped Noise instances are collectable at the
+ *                                 OBJECT level (lite-leak FinalizationRegistry)
  *     T9  controls                every gate proven able to fail, plus the
  *                                 seedNoise dev-warning fires / prod-silent
  *
@@ -41,27 +43,32 @@ import { SEED } from './torture/harness.mjs';
 import { run as t0 } from './torture/t0-laws.mjs';
 import { run as t5 } from './torture/t5-fuzz.mjs';
 import { run as t6 } from './torture/t6-alloc.mjs';
+import { run as t7 } from './torture/t7-leak.mjs';
 import { run as t9 } from './torture/t9-controls.mjs';
 
 const TIERS = [
     ['T0 laws', t0],
     ['T5 fuzz', t5],
     ['T6 alloc', t6],
+    ['T7 leak', t7],
     ['T9 controls', t9],
 ];
 
 const BREAK = process.env.NOISE_TORTURE_BREAK === '1';
 
-function main() {
+async function main() {
     if (typeof globalThis.gc !== 'function') {
         process.stderr.write(
             'torture: FAIL -- run with --expose-gc:  node --expose-gc test/torture.mjs\n');
         process.exit(1);
     }
 
+    // Tiers run STRICTLY SEQUENTIALLY (lite-gc-profiler is one-at-a-time). Some
+    // tiers are async (T7's FinalizationRegistry drain awaits macrotasks), so
+    // each is awaited -- a sync tier's `undefined` awaits harmlessly.
     for (const [name, run] of TIERS) {
         try {
-            run();
+            await run();
         } catch (err) {
             process.stderr.write(
                 'torture: FAIL -- ' + name + ' threw: ' + (err && err.stack || err) +

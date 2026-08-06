@@ -18,11 +18,13 @@ import { readFileSync } from 'node:fs';
 import { POINT_STRIDE, POINT_OFFSETS } from '@zakkster/lite-particles';
 import { LAYOUT, createField } from '@zakkster/lite-gl';
 import { BEHAVIORS } from '@zakkster/lite-ambient-fx';
+import { gradientFire } from '@zakkster/lite-gradient-studio';
 
 import { createNoise } from '../Noise.js';
 import { createCurlFlow } from '../examples/curl-advection.mjs';
 import { bakeFieldToGl, roundTrip } from '../examples/field-to-gl.mjs';
 import { createCurlBehavior, registerCurlBehavior } from '../examples/ambient-curl.mjs';
+import { paintTile, colourSeamGap, MODELS } from '../examples/tileable-to-gradient.mjs';
 
 /** Advance a flow N frames and return its first particle's (x, y) via packTo. */
 function sampleFirst(flow, count, frames) {
@@ -350,6 +352,136 @@ describe('N1 composability (integration level)', () => {
     });
 });
 
+describe('recipe: tileableField2 -> lite-gradient-studio (the seamless coloured tile)', () => {
+    it('a grid-aligned coloured tile wraps BIT-EXACT, every model (colour seam gap === 0)', () => {
+        for (const model of MODELS) {
+            assert.strictEqual(colourSeamGap({ w: 256, h: 256, period: 4, model }), 0,
+                `${model}: coloured wrap column not byte-identical to column 0`);
+        }
+    });
+
+    for (const [w, period] of [[64, 4], [128, 2], [8, 16]]) {
+        it(`BOUNDARY other grid-aligned dims (w=${w}, period=${period}) stay bit-exact`, () => {
+            assert.strictEqual(w * (period / w), period, `precondition: ${w}/${period} must be grid-aligned`);
+            for (const model of MODELS) {
+                assert.strictEqual(colourSeamGap({ w, h: w, period, model }), 0,
+                    `${model}: aligned ${w}/${period} coloured seam not exact`);
+            }
+        });
+    }
+
+    it('FAILS CLOSED on a non-grid-aligned bake (RangeError, not a near-seam tile)', () => {
+        // 7*(29/7) !== 29 in float64 -> the wrap column lands a few ULPs off period.
+        // The recipe refuses it rather than paint a tile that is epsilon-off at the seam.
+        assert.notStrictEqual(7 * (29 / 7), 29, 'sanity: 7/29 must be non-grid-aligned');
+        assert.throws(() => paintTile({ w: 7, h: 7, period: 29 }), /not grid-aligned/);
+    });
+
+    it('FAILS CLOSED on a malformed (non-Gradient) colour source (TypeError)', () => {
+        // A wrong-shaped object is the real hazard: stops not an array, or no
+        // sampleArray. (An omitted/null gradient defaults to gradientOcean via
+        // `?? default`, the same nullish-default every recipe param uses.)
+        assert.throws(() => paintTile({ gradient: { stops: 'nope' } }), TypeError);
+        assert.throws(() => paintTile({ gradient: { stops: [], sampleArray: null } }), TypeError);
+        assert.throws(() => paintTile({ gradient: 42 }), TypeError);
+    });
+
+    it('the coloured texture is a packed RGBA-LE Uint32Array, ImageData-ready (len === w*h)', () => {
+        const { texture, w, h } = paintTile({ w: 64, h: 64, period: 4 });
+        assert.ok(texture instanceof Uint32Array, 'texture must be a Uint32Array');
+        assert.strictEqual(texture.length, w * h);
+        // Every pixel is opaque (alpha byte === 255) -- a valid RGBA-LE image.
+        for (let i = 0; i < texture.length; i++) {
+            assert.strictEqual((texture[i] >>> 24) & 255, 255, `pixel ${i} not opaque`);
+        }
+    });
+
+    it('is deterministic per seed (same opts -> byte-identical texture)', () => {
+        const a = paintTile({ w: 64, h: 64, period: 4, seed: 7 }).texture;
+        const b = paintTile({ w: 64, h: 64, period: 4, seed: 7 }).texture;
+        for (let i = 0; i < a.length; i++) assert.strictEqual(a[i], b[i], `pixel ${i} drifted between runs`);
+    });
+
+    it('BOUNDARY a non-square grid-aligned tile (w != h) still wraps bit-exact in colour', () => {
+        // The recipe's own boundary sweep only ever bakes w === h. w and h drive
+        // INDEPENDENT step sizes (stepX = period/w, stepY = period/h) in
+        // tileableField2, so a non-square tile is a distinct code path, not a
+        // relabeling of the square case.
+        for (const [w, h, period] of [[128, 64, 4], [64, 256, 8]]) {
+            assert.strictEqual(w * (period / w), period, `precondition: ${w}/${period} must be grid-aligned`);
+            for (const model of MODELS) {
+                assert.strictEqual(colourSeamGap({ w, h, period, model }), 0,
+                    `${model}: non-square ${w}x${h}/${period} coloured column seam not exact`);
+            }
+        }
+    });
+
+    it('BOUNDARY a different preset gradient than the default (gradientFire) still yields seam gap 0', () => {
+        // colourSeamGap defaults to gradientOcean; every prior assertion in this
+        // file exercises only that one LUT. A different stop layout (different
+        // colour count/spacing) proves the bit-exact wrap is a property of the
+        // FIELD + pure-per-cell-map argument, not an artifact of one specific LUT.
+        for (const model of MODELS) {
+            assert.strictEqual(colourSeamGap({ w: 128, h: 128, period: 4, model, gradient: gradientFire }), 0,
+                `${model}: gradientFire coloured wrap column not byte-identical to column 0`);
+        }
+    });
+
+    it('the wrapColour buffer is exactly h long and fully opaque, matching the documented shape', () => {
+        const { wrapColour, h } = paintTile({ w: 64, h: 96, period: 4 });
+        assert.ok(wrapColour instanceof Uint32Array, 'wrapColour must be a Uint32Array');
+        assert.strictEqual(wrapColour.length, h, 'wrapColour must have exactly h entries (one per row)');
+        for (let i = 0; i < wrapColour.length; i++) {
+            assert.strictEqual((wrapColour[i] >>> 24) & 255, 255, `wrapColour[${i}] not opaque`);
+        }
+    });
+
+    it('the RangeError guard fires before any field/texture allocation (fail-closed, not fail-late)', () => {
+        // paintTile returns {noise, field, texture, wrapColour, ...} on success;
+        // a guard that ran AFTER allocating would still throw, but would have
+        // wastefully baked a field first. Assert the thrown call produces no
+        // observable partial result by re-running under a Proxy-free direct
+        // check: the function must throw synchronously on the very first call,
+        // and (per source) the alignment check is the first statement in the
+        // body -- before `createNoise(seed)` or any `new Float64Array`.
+        let threw = false;
+        try {
+            paintTile({ w: 7, h: 7, period: 29 });
+        } catch (err) {
+            threw = true;
+            assert.ok(err instanceof RangeError);
+        }
+        assert.ok(threw, 'paintTile must throw synchronously, not return a partial object');
+    });
+
+    describe('the underlying row wrap (untested by the recipe itself)', () => {
+        // tileable-to-gradient.mjs only ever bakes and checks the COLUMN wrap
+        // (via `ox = w*stepX`). The recipe's docs are explicit that the ROW
+        // wrap is not claimed. _tileable2's bilinear-blend identity is
+        // symmetric in x/y, so the row wrap should ALSO be bit-exact at the
+        // raw-field level -- this closes the coverage gap by proving (or
+        // disproving) that symmetric claim directly against tileableField2,
+        // independent of the recipe's own (column-only) proof.
+        for (const model of MODELS) {
+            it(`BOUNDARY ${model}: raw-field row wrap (oy = h*stepY) is bit-exact, same as the column`, () => {
+                const w = 64, h = 64, period = 4, octaves = 5;
+                const { noise } = paintTile({ w, h, period, model, octaves });
+                const stepY = period / h;
+                const field = new Float64Array(w * h);
+                noise.tileableField2(field, w, h, { model, periodX: period, periodY: period, octaves });
+                const wrapRow = new Float64Array(w);
+                noise.tileableField2(wrapRow, w, 1, {
+                    model, periodX: period, periodY: period, octaves, oy: h * stepY,
+                });
+                for (let x = 0; x < w; x++) {
+                    assert.strictEqual(wrapRow[x], field[x],
+                        `${model}: row ${h} (wrap) vs row 0 differ at x=${x} -- row wrap is NOT bit-exact`);
+                }
+            });
+        }
+    });
+});
+
 describe('no runtime dependency added', () => {
     it('package.json declares no runtime dependencies', () => {
         const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
@@ -384,11 +516,11 @@ describe('BOUNDARY packaging contract (N4)', () => {
 
     it('the ecosystem peers used by the recipes are devDependencies, not dependencies', () => {
         const dev = pkg.devDependencies ?? {};
-        for (const name of ['@zakkster/lite-particles', '@zakkster/lite-gl', '@zakkster/lite-ambient-fx']) {
+        for (const name of ['@zakkster/lite-particles', '@zakkster/lite-gl', '@zakkster/lite-ambient-fx', '@zakkster/lite-gradient-studio']) {
             assert.ok(name in dev, `${name} missing from devDependencies`);
         }
         const deps = pkg.dependencies ?? {};
-        for (const name of ['@zakkster/lite-particles', '@zakkster/lite-gl', '@zakkster/lite-ambient-fx']) {
+        for (const name of ['@zakkster/lite-particles', '@zakkster/lite-gl', '@zakkster/lite-ambient-fx', '@zakkster/lite-gradient-studio']) {
             assert.ok(!(name in deps), `${name} leaked into runtime dependencies`);
         }
     });

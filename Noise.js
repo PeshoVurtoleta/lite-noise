@@ -1,5 +1,5 @@
 /**
- * @zakkster/lite-noise v1.5.1
+ * @zakkster/lite-noise v1.5.2
  *
  * Zero-GC seeded Simplex 2D/3D + FBM + ridged/billow multifractals + seamless
  * loop + tileable field + curl2 + curl3 + domain warp + bakeable heightfields.
