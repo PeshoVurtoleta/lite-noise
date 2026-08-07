@@ -2,6 +2,31 @@
 
 All notable changes to `@zakkster/lite-noise`.
 
+## [1.6.0] — 2026-08-06
+
+**3D scalar volume bakes.** One new function, `fillField3`, the 3D sibling of `fillField2`: it bakes a whole `w * h * d` scalar noise volume into a caller-owned TypedArray, zero allocation in the bake. The three `tileableField2` goldens and every 2D golden are **unchanged** — the `_fbm3` refactor onto a shared `_octaves3` skeleton is byte-identical at mode 0, so `fbm3` and `curl3` outputs do not move.
+
+### Added
+
+- **`fillField3(out, w, h, d, opts?)`** (module function + `Noise.prototype.fillField3`) — bake a `w * h * d` scalar noise volume into a caller-supplied `Float32Array`/`Float64Array` (`length >= w * h * d`). Row-major with **z outer**, then y, then x inner: the linear index of cell (x, y, z) is `((z*h)+y)*w + x`. Triple loop with **incremental coordinate stepping** (`px += scale` per cell, `py`/`pz` per row/slab — no per-cell multiply). Zero allocation once options are read.
+  - **Models** (`opts.model`, per-octave shaping via `_octaves3`): `fbm` signed (~[-1, 1]); `ridged` `(1 - |s|)²` (~[0, 1], sharp creases); `billow` `|s|` (~[0, 1], folded) — the same character as the 2D samplers.
+  - **Fails closed at setup, before `out` is touched — and UNLIKE `fillField2`, which silently truncates a short buffer.** An unknown `model` throws a `RangeError` naming the valid set; a `w`/`h`/`d` that is not a **positive integer** throws (`Number.isInteger` also rejects NaN / ±Infinity / 0 / negatives); and `out.length < w*h*d` throws rather than bake a partial volume. The integer requirement is load-bearing: the triple loop iterates `ceil(w)*ceil(h)*ceil(d)` cells, so a **non-integer** dim would diverge from the `need = w*h*d` length guard and let a buffer sized to `need` take writes past its end (silent TypedArray no-ops) — the exact quiet-truncation this function exists to prevent. A 3D volume is large enough (a 512³ Float32 field is 512 MB) that such a drop would hide a real sizing bug; failing closed on a non-integer dim (rather than flooring garbage input) is the house-Law posture. **`fillField2` itself is unchanged** (its silent-truncate precedent stands).
+  - `opts` (guarded `opts?.x ?? default` reads, no `opts = {}`, so no allocation on the read path): `scale = 0.01, octaves = 4, lacunarity = 2, gain = 0.5, ox = 0, oy = 0, oz = 0, model = 'fbm', normalize = false`. `normalize: true` reuses `fillField2`'s two-pass exact-[0, 1] remap (no temp buffer).
+- **`FillField3Options`** type in `Noise.d.ts`; both signatures (module + instance).
+- **Three committed determinism goldens** (seed 42, 32×32×32 Float32 volume, scale 0.05, octaves 4, lacunarity 2, gain 0.5): `fbm → 60946816`, `ridged → 950f56bc`, `billow → 9c7af46e`. Covered by a stable-hash test plus module-fn vs instance parity.
+- **Test coverage** — the z-outer row-major layout proven bit-exact against a hand-indexed `fbm3` sweep at the same incrementally-stepped coordinates; the three goldens; module == instance (non-cube dims, all 3 models); the fail-closed matrix (undersized buffer throws with `out` left unwritten; `d` = NaN/Infinity/-1/0 throw; `w`/`h` non-finite/non-positive throw; unknown model throws; exact `out.length === w*h*d` boundary); `normalize` exact endpoints + constant-field all-zero; Float64Array target.
+
+### Changed
+
+- **`_fbm3` now delegates to a shared `_octaves3(perm, x, y, z, octaves, lacunarity, gain, mode)` skeleton** (`mode` 0/1/2 = fbm/ridged/billow), mirroring `_octaves2`. The mode-0 arithmetic is byte-identical to the previous inlined `_fbm3` — the skipped branches never touch the sample — so `fbm3` and `curl3` (which samples `_simplex3` directly) are **bytewise unchanged**; verified against a pre-refactor snapshot before anything else. This share is what lets `fillField3`'s three models ride one loop.
+- **Bundle ceiling raised 2,816 → 3,180 B** (measured **3,132 B min+gz**), deliberately, for `fillField3`. It is a genuinely new triple-loop 3D volume bake with cold-path fail-closed guards (unknown model, non-positive-integer dims, undersized-buffer throw) and a `normalize` pass that the octave skeleton cannot absorb. `bundle-check` still externalises nothing — zero runtime dependencies hold. ~48 B headroom.
+- **Torture harness** extended: T6 gates the new bake path (module + instance, all 3 models + the `normalize` pass) as a heavy bake (major-GC + `arrayBuffers`, like `fillField2`/`tileableField2`) over a 32³ buffer.
+- Version stamped 1.6.0 across `package.json`, the `Noise.js`/`Noise.d.ts` headers, and `llms.txt`.
+
+### Not implemented (deferred)
+
+- `tileableField3` (a seamless 3D volume) is **not** in this release. `simplex3` is untouched.
+
 ## [1.5.2] — 2026-08-06
 
 Cold-path only — one new ecosystem recipe plus doc/packaging hygiene. **No runtime code changed**: `Noise.js` is byte-for-byte the same minified output, the three `tileableField2` goldens (`8f34c3b8` / `e117b1a8` / `b5d78012`) are unchanged, and the bundle holds at **2,755 B min+gz** (61 B headroom).

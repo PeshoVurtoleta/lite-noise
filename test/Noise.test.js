@@ -10,7 +10,7 @@ import {
     noiseLoop, tileable2,
     curl2, curl3,
     warp2,
-    fillField2, tileableField2,
+    fillField2, tileableField2, fillField3,
     createNoise, Noise,
 } from '../Noise.js';
 
@@ -851,6 +851,367 @@ describe('lite-noise: fillField2 normalize', () => {
     });
 });
 
+describe('lite-noise: fillField3 (3D scalar volume bake)', () => {
+    const FF3_MODELS = ['fbm', 'ridged', 'billow'];
+
+    it('bakes a w*h*d volume, z-outer row-major (index = ((z*h)+y)*w + x)', () => {
+        seedNoise(42);
+        const w = 8, h = 6, d = 4;
+        const out = new Float32Array(w * h * d);
+        const result = fillField3(out, w, h, d, { scale: 0.05 });
+        assert.strictEqual(result, out);
+        // Every cell written and finite; range within the fbm ~[-1,1] band.
+        for (let i = 0; i < out.length; i++) {
+            assert.ok(Number.isFinite(out[i]), `cell ${i} non-finite`);
+            assert.ok(out[i] >= -1.1 && out[i] <= 1.1, `cell ${i} out of range: ${out[i]}`);
+        }
+    });
+
+    it('the z-outer row-major layout matches a hand-indexed fbm3 sweep, bit-exact', () => {
+        // Prove the documented index formula against an explicit triple loop that
+        // samples fbm3 at the same INCREMENTALLY-stepped coordinates (px += scale,
+        // never x*scale -- the multiply would diverge from the accumulation by ULPs,
+        // which is exactly the coordinate contract fillField3 documents).
+        const inst = createNoise(42);
+        const w = 5, h = 7, d = 3, scale = 0.05;
+        const out = new Float32Array(w * h * d);
+        inst.fillField3(out, w, h, d, { scale, octaves: 4, lacunarity: 2, gain: 0.5 });
+        let pz = 0;
+        for (let z = 0; z < d; z++) {
+            let py = 0;
+            for (let y = 0; y < h; y++) {
+                let px = 0;
+                for (let x = 0; x < w; x++) {
+                    const idx = ((z * h) + y) * w + x;
+                    const expect = Math.fround(inst.fbm3(px, py, pz, 4, 2, 0.5));
+                    assert.strictEqual(out[idx], expect, `cell (${x},${y},${z}) idx ${idx} mismatch`);
+                    px += scale;
+                }
+                py += scale;
+            }
+            pz += scale;
+        }
+    });
+
+    it('accepts missing opts (all defaults) and varies', () => {
+        seedNoise(42);
+        const out = new Float32Array(4 * 4 * 4);
+        const result = fillField3(out, 4, 4, 4);
+        assert.strictEqual(result, out);
+        let variance = 0;
+        for (let i = 1; i < out.length; i++) variance += Math.abs(out[i] - out[0]);
+        assert.ok(variance > 0, 'default-opts volume had no variation');
+    });
+
+    // --- Committed goldens ----------------------------------------------------
+    it('golden: seed 42 -> 32x32x32 Float32 volume is stable for all 3 models', () => {
+        seedNoise(42);
+        const golden = { fbm: GOLDEN_FF3_FBM_HASH, ridged: GOLDEN_FF3_RIDGED_HASH, billow: GOLDEN_FF3_BILLOW_HASH };
+        for (const model of FF3_MODELS) {
+            const f = new Float32Array(32 * 32 * 32);
+            fillField3(f, 32, 32, 32, { model, scale: 0.05, octaves: 4, lacunarity: 2, gain: 0.5 });
+            assert.strictEqual(fnv1a(new Uint8Array(f.buffer)).toString(16), golden[model], `${model} golden drift`);
+        }
+    });
+
+    it('module == instance at the same seed (all 3 models, non-cube dims)', () => {
+        seedNoise(7);
+        const inst = createNoise(7);
+        const w = 9, h = 5, d = 6;
+        for (const model of FF3_MODELS) {
+            const fm = new Float32Array(w * h * d), fi = new Float32Array(w * h * d);
+            fillField3(fm, w, h, d, { model, scale: 0.04, octaves: 3, gain: 0.6 });
+            inst.fillField3(fi, w, h, d, { model, scale: 0.04, octaves: 3, gain: 0.6 });
+            for (let i = 0; i < fm.length; i++) {
+                assert.strictEqual(fm[i], fi[i], `${model}: module != instance at cell ${i}`);
+            }
+        }
+    });
+
+    // --- FAIL CLOSED (differs from fillField2's silent truncate, on purpose) ---
+    it('FAILS CLOSED: out shorter than w*h*d throws RangeError and leaves out unwritten', () => {
+        const n = createNoise(42);
+        const out = new Float32Array(3 * 3 * 3 - 1); // one short of the volume
+        out.fill(7);
+        assert.throws(() => n.fillField3(out, 3, 3, 3, { scale: 0.05 }), RangeError);
+        // The guard runs before any write: out must be untouched.
+        for (let i = 0; i < out.length; i++) assert.strictEqual(out[i], 7, `cell ${i} was written before the throw`);
+    });
+
+    it('FAILS CLOSED: d = NaN / Infinity / -1 / 0 each throw RangeError, out unwritten', () => {
+        const n = createNoise(42);
+        const out = new Float32Array(64);
+        for (const bad of [NaN, Infinity, -1, 0]) {
+            out.fill(9);
+            assert.throws(() => n.fillField3(out, 4, 4, bad, { scale: 0.05 }), RangeError, `d=${bad}`);
+            for (let i = 0; i < out.length; i++) assert.strictEqual(out[i], 9, `d=${bad} wrote cell ${i}`);
+        }
+    });
+
+    it('FAILS CLOSED: w or h non-finite / non-positive throws RangeError', () => {
+        const n = createNoise(42);
+        const out = new Float32Array(64);
+        for (const bad of [NaN, Infinity, -2, 0]) {
+            assert.throws(() => n.fillField3(out, bad, 4, 4, { scale: 0.05 }), RangeError, `w=${bad}`);
+            assert.throws(() => n.fillField3(out, 4, bad, 4, { scale: 0.05 }), RangeError, `h=${bad}`);
+        }
+    });
+
+    it('FAILS CLOSED: an unknown model throws RangeError naming the valid set, out unwritten', () => {
+        const n = createNoise(42);
+        const out = new Float32Array(64);
+        out.fill(5);
+        assert.throws(() => n.fillField3(out, 4, 4, 4, { model: 'perlin' }), /fbm.*ridged.*billow/);
+        for (let i = 0; i < out.length; i++) assert.strictEqual(out[i], 5, `cell ${i} written before model throw`);
+    });
+
+    it('exact boundary: out.length === w*h*d does not throw; one less does', () => {
+        const n = createNoise(42);
+        const exact = new Float32Array(4 * 4 * 4);
+        assert.doesNotThrow(() => n.fillField3(exact, 4, 4, 4, { scale: 0.05 }));
+        const shortByOne = new Float32Array(4 * 4 * 4 - 1);
+        assert.throws(() => n.fillField3(shortByOne, 4, 4, 4, { scale: 0.05 }), RangeError);
+    });
+
+    it('normalize remaps to exact [0, 1] endpoints; a constant field -> all-zero', () => {
+        seedNoise(42);
+        const w = 16, h = 16, d = 16;
+        const out = new Float32Array(w * h * d);
+        fillField3(out, w, h, d, { scale: 0.05, normalize: true });
+        let mn = Infinity, mx = -Infinity;
+        for (let i = 0; i < out.length; i++) { if (out[i] < mn) mn = out[i]; if (out[i] > mx) mx = out[i]; }
+        assert.strictEqual(mn, 0, `normalize min not bit-exact 0: ${mn}`);
+        assert.strictEqual(mx, 1, `normalize max not bit-exact 1: ${mx}`);
+        // octaves=0 is a constant field -> all-zero, never NaN.
+        const flat = new Float32Array(4 * 4 * 4);
+        flat.fill(-3);
+        fillField3(flat, 4, 4, 4, { octaves: 0, normalize: true });
+        for (let i = 0; i < flat.length; i++) assert.strictEqual(flat[i], 0, `octaves=0 cell ${i} not 0`);
+    });
+
+    it('Float64Array target works and stays finite', () => {
+        const n = createNoise(42);
+        const out = new Float64Array(8 * 8 * 8);
+        assert.doesNotThrow(() => n.fillField3(out, 8, 8, 8, { model: 'ridged', scale: 0.05 }));
+        for (let i = 0; i < out.length; i++) assert.ok(Number.isFinite(out[i]), `cell ${i} non-finite`);
+    });
+});
+
+describe('lite-noise: fillField3 boundary matrix (QA torture pass)', () => {
+    // -- non-cube volumes: layout round-trip against an INDEPENDENT single-point
+    // eval (not the bake's own accumulation loop -- a genuinely separate code
+    // path: direct multiply-based coordinates, not += stepping) -------------
+    for (const [w, h, d] of [[8, 16, 4], [4, 8, 16]]) {
+        it(`non-cube ${w}x${h}x${d}: out[idx] matches a direct fbm3 sample at a few points (independent eval)`, () => {
+            const n = createNoise(11);
+            const scale = 0.07, octaves = 4, lac = 2.0, gain = 0.5;
+            const out = new Float32Array(w * h * d);
+            n.fillField3(out, w, h, d, { scale, octaves, lacunarity: lac, gain });
+            const picks = [[0, 0, 0], [w - 1, 0, 0], [0, h - 1, 0], [0, 0, d - 1], [w - 1, h - 1, d - 1],
+                [(w >> 1), (h >> 1), (d >> 1)]];
+            for (const [x, y, z] of picks) {
+                const idx = ((z * h) + y) * w + x;
+                // Direct multiply-based coordinate -- NOT the bake's `px += scale`
+                // accumulation. This is a genuinely separate computation of the
+                // same documented coordinate contract, so any drift in the bake's
+                // stepping shows up as more than float noise.
+                const expect = Math.fround(n.fbm3(x * scale, y * scale, z * scale, octaves, lac, gain));
+                const got = out[idx];
+                const diff = Math.abs(got - expect);
+                assert.ok(diff < 1e-4,
+                    `(${x},${y},${z}) idx ${idx}: bake=${got} direct=${expect} diff=${diff}`);
+            }
+        });
+    }
+
+    // -- d=1 degenerates to a single slab --------------------------------------
+    // fillField3 samples simplex3 (a genuinely 3D lattice), fillField2 samples
+    // simplex2 (a 2D lattice) -- different kernels entirely, so a d=1 volume
+    // and a fillField2 bake at the "same" (x, y) are NOT expected to agree
+    // numerically; comparing them would be a false equivalence. What IS a valid
+    // claim: the d=1 slab is exactly the z=0 slab of any larger-d bake with the
+    // same opts (the z-loop body for z=0 cannot depend on d), proving d=1 is a
+    // true degenerate case of the general triple loop, not a special-cased path.
+    it('d=1 slab is bit-identical to the z=0 slab of a d=3 bake with the same opts', () => {
+        const n = createNoise(5);
+        const w = 6, h = 5;
+        const opts = { scale: 0.04, octaves: 3, lacunarity: 2.1, gain: 0.55, model: 'ridged' };
+        const slab = new Float32Array(w * h * 1);
+        n.fillField3(slab, w, h, 1, opts);
+        const cube = new Float32Array(w * h * 3);
+        n.fillField3(cube, w, h, 3, opts);
+        for (let i = 0; i < w * h; i++) {
+            assert.strictEqual(slab[i], cube[i], `slab cell ${i} != d=3's z=0 slab`);
+        }
+    });
+
+    it('d=1 slab is internally self-consistent: matches a direct fbm3 sample with z fixed at oz', () => {
+        const n = createNoise(5);
+        const w = 6, h = 5, oz = 1.25, scale = 0.04;
+        const out = new Float32Array(w * h);
+        n.fillField3(out, w, h, 1, { scale, oz, octaves: 2, lacunarity: 2, gain: 0.5 });
+        let idx = 0;
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++, idx++) {
+                const expect = Math.fround(n.fbm3(x * scale, y * scale, oz, 2, 2, 0.5));
+                assert.ok(Math.abs(out[idx] - expect) < 1e-4, `cell (${x},${y}) idx ${idx} mismatch`);
+            }
+        }
+    });
+
+    // -- Float32 vs Float64: same layout, distinct ONLY by precision ----------
+    it('Float32Array vs Float64Array targets: identical after fround, genuinely more precise in f64', () => {
+        seedNoise(42);
+        const w = 6, h = 6, d = 6;
+        const f32 = new Float32Array(w * h * d);
+        const f64 = new Float64Array(w * h * d);
+        const opts = { scale: 0.037, octaves: 4, lacunarity: 2, gain: 0.5 };
+        fillField3(f32, w, h, d, opts);
+        fillField3(f64, w, h, d, opts);
+        let sawExtraPrecision = false;
+        for (let i = 0; i < f32.length; i++) {
+            assert.strictEqual(Math.fround(f64[i]), f32[i], `cell ${i}: f64 rounds to a different f32 value`);
+            if (f64[i] !== f32[i]) sawExtraPrecision = true;
+        }
+        assert.ok(sawExtraPrecision,
+            'Float64Array target carried no extra precision over Float32Array -- suspicious for a 216-cell volume');
+    });
+
+    // -- ridged/billow over a volume stay in the documented ~[0, 1] band ------
+    it('ridged and billow fillField3 volumes stay in ~[0, 1] (same contract as the 2D models)', () => {
+        const n = createNoise(9);
+        const w = 12, h = 12, d = 12;
+        for (const model of ['ridged', 'billow']) {
+            const out = new Float32Array(w * h * d);
+            n.fillField3(out, w, h, d, { model, scale: 0.06, octaves: 5, lacunarity: 2, gain: 0.5 });
+            let mn = Infinity, mx = -Infinity;
+            for (const v of out) { if (v < mn) mn = v; if (v > mx) mx = v; }
+            assert.ok(mn >= -0.01 && mx <= 1.01, `${model} volume out of range: [${mn}, ${mx}]`);
+        }
+    });
+
+    // -- normalize:false leaves the raw (non-[0,1]) range untouched ------------
+    it('normalize:false does NOT rescale (differs from the same bake with normalize:true)', () => {
+        const n = createNoise(3);
+        const w = 10, h = 10, d = 10;
+        const opts = { scale: 0.05, octaves: 4, lacunarity: 2, gain: 0.5 };
+        const raw = new Float32Array(w * h * d);
+        n.fillField3(raw, w, h, d, opts);
+        const norm = new Float32Array(w * h * d);
+        n.fillField3(norm, w, h, d, { ...opts, normalize: true });
+        let mnRaw = Infinity, mxRaw = -Infinity, mnNorm = Infinity, mxNorm = -Infinity;
+        for (let i = 0; i < raw.length; i++) {
+            if (raw[i] < mnRaw) mnRaw = raw[i];
+            if (raw[i] > mxRaw) mxRaw = raw[i];
+            if (norm[i] < mnNorm) mnNorm = norm[i];
+            if (norm[i] > mxNorm) mxNorm = norm[i];
+        }
+        assert.strictEqual(mnNorm, 0);
+        assert.strictEqual(mxNorm, 1);
+        assert.ok(mnRaw !== 0 || mxRaw !== 1, `raw range coincidentally [0,1]: [${mnRaw}, ${mxRaw}]`);
+        assert.notDeepStrictEqual(Array.from(raw), Array.from(norm), 'normalize:false produced the normalized field');
+    });
+
+    // -- boundary matrix: 0/1/N-1/N/N+1, empty, null, undefined, NaN, -0 -------
+    it('BOUNDARY w=h=d=1: single-cell volume matches a direct single-point sample', () => {
+        const n = createNoise(42);
+        const out = new Float32Array(1);
+        n.fillField3(out, 1, 1, 1, { scale: 0.05, ox: 0.2, oy: 0.3, oz: 0.4 });
+        assert.strictEqual(out[0], Math.fround(n.fbm3(0.2, 0.3, 0.4, 4, 2, 0.5)));
+    });
+
+    it('BOUNDARY out.length === need - 1 (N-1) throws; === need (N) does not', () => {
+        const n = createNoise(42);
+        const need = 3 * 3 * 3;
+        assert.throws(() => n.fillField3(new Float32Array(need - 1), 3, 3, 3, { scale: 0.05 }), RangeError);
+        assert.doesNotThrow(() => n.fillField3(new Float32Array(need), 3, 3, 3, { scale: 0.05 }));
+    });
+
+    it('BOUNDARY out.length === need + 1 (N+1, oversized): does not throw, trailing cell untouched', () => {
+        const n = createNoise(42);
+        const need = 3 * 3 * 3;
+        const out = new Float32Array(need + 1);
+        out.fill(-777);
+        n.fillField3(out, 3, 3, 3, { scale: 0.05 });
+        assert.notStrictEqual(out[need - 1], -777, 'last in-range cell was not written');
+        assert.strictEqual(out[need], -777, 'oversized guard slot was written past the documented volume');
+    });
+
+    it('BOUNDARY empty out (length 0) with a non-empty request throws RangeError', () => {
+        const n = createNoise(42);
+        assert.throws(() => n.fillField3(new Float32Array(0), 2, 2, 2, { scale: 0.05 }), RangeError);
+    });
+
+    it('BOUNDARY out = null / undefined fails closed (throws before any write is possible)', () => {
+        const n = createNoise(42);
+        // No `out.length` to read on null/undefined -- this throws a TypeError
+        // from the property access itself, which is still fail-closed (it throws
+        // before the triple loop can run), just a different Error subclass than
+        // the documented RangeError. Pinned so a future refactor that tries to
+        // read `opts` off `out` (or vice versa) can't silently swallow this.
+        assert.throws(() => n.fillField3(null, 2, 2, 2, { scale: 0.05 }), TypeError);
+        assert.throws(() => n.fillField3(undefined, 2, 2, 2, { scale: 0.05 }), TypeError);
+    });
+
+    it('BOUNDARY -0 for w, h, or d throws RangeError (fails the > 0 check, same as +0)', () => {
+        const n = createNoise(42);
+        const out = new Float32Array(64);
+        assert.throws(() => n.fillField3(out, -0, 4, 4, { scale: 0.05 }), RangeError, 'w=-0');
+        assert.throws(() => n.fillField3(out, 4, -0, 4, { scale: 0.05 }), RangeError, 'h=-0');
+        assert.throws(() => n.fillField3(out, 4, 4, -0, { scale: 0.05 }), RangeError, 'd=-0');
+    });
+
+    // -- re-entrant write: baking into the same buffer twice overwrites cleanly
+    it('RE-ENTRANT: fillField3 writing into the same buffer twice in a row overwrites cleanly', () => {
+        const n = createNoise(42);
+        const out = new Float32Array(4 * 4 * 4);
+        n.fillField3(out, 4, 4, 4, { scale: 0.05, model: 'fbm' });
+        const first = Array.from(out);
+        n.fillField3(out, 4, 4, 4, { scale: 0.09, model: 'ridged' });
+        const second = Array.from(out);
+        assert.notDeepStrictEqual(first, second, 'second bake did not overwrite the first');
+        // A third bake back to the FIRST opts must reproduce the FIRST result
+        // exactly -- no residue from the intervening ridged bake survives.
+        n.fillField3(out, 4, 4, 4, { scale: 0.05, model: 'fbm' });
+        assert.deepStrictEqual(Array.from(out), first, 'residue from an intervening bake survived a re-entrant call');
+    });
+
+    // -- ADVERSARIAL (intent preserved): the guard must NEVER under-count the
+    // real cell count and silently partial-bake. The root cause was that `need =
+    // w*h*d` (raw dims) diverges from the triple loop's ceil(w)*ceil(h)*ceil(d)
+    // iteration count for a NON-INTEGER dim, so a buffer sized to exactly `need`
+    // passed the length guard and then took writes past its end (silent TypedArray
+    // no-ops). The fix fails closed: w/h/d must each be a positive INTEGER, so the
+    // divergence can't arise -- a non-integer dim throws a RangeError BEFORE any
+    // write, and an integer-dims bake of the same shape still works.
+    it('ADVERSARIAL: a non-integer w/h/d fails closed (RangeError before any write), never a silent partial bake', () => {
+        const n = createNoise(42);
+
+        // A fractional w/h/d that used to under-count now throws before `out` is
+        // touched. Canary the buffer and assert it is left entirely unwritten.
+        const CANARY = -999;
+        for (const [w, h, d] of [[3.5, 4, 4], [4, 4.25, 4], [4, 4, 2.75], [0.5, 0.5, 0.5]]) {
+            const out = new Float32Array(256).fill(CANARY);
+            assert.throws(() => n.fillField3(out, w, h, d, { scale: 0.05 }), RangeError,
+                `fillField3(${w},${h},${d}) must fail closed on a non-integer dim`);
+            for (let i = 0; i < out.length; i++) {
+                assert.strictEqual(out[i], CANARY,
+                    `fillField3(${w},${h},${d}) wrote cell ${i} before the fail-closed throw`);
+            }
+        }
+
+        // The integer-dims bake of the same shape still works: a buffer sized to
+        // exactly w*h*d is accepted and every cell is written (no under-count, no
+        // partial volume). This pins the fix's positive half.
+        const w = 4, h = 4, d = 4, need = w * h * d;
+        const exact = new Float32Array(need).fill(CANARY);
+        assert.doesNotThrow(() => n.fillField3(exact, w, h, d, { scale: 0.05 }));
+        for (let i = 0; i < need; i++) {
+            assert.notStrictEqual(exact[i], CANARY, `integer-dims bake left cell ${i} unwritten`);
+        }
+    });
+});
+
 describe('lite-noise: instance API (createNoise / Noise)', () => {
     it('createNoise returns a Noise instance', () => {
         const n = createNoise(0);
@@ -859,7 +1220,7 @@ describe('lite-noise: instance API (createNoise / Noise)', () => {
 
     it('exposes every sampler as a method', () => {
         const n = createNoise(1);
-        for (const m of ['simplex2', 'simplex3', 'fbm2', 'fbm3', 'ridged2', 'billow2', 'noiseLoop', 'tileable2', 'curl2', 'curl3', 'warp2', 'fillField2', 'tileableField2', 'seed']) {
+        for (const m of ['simplex2', 'simplex3', 'fbm2', 'fbm3', 'ridged2', 'billow2', 'noiseLoop', 'tileable2', 'curl2', 'curl3', 'warp2', 'fillField2', 'fillField3', 'tileableField2', 'seed']) {
             assert.strictEqual(typeof n[m], 'function', `missing method: ${m}`);
         }
     });
@@ -1184,3 +1545,8 @@ const GOLDEN_LOOP_HASH   = '2cfa58f8';
 const GOLDEN_TF2_FBM_HASH    = '8f34c3b8';
 const GOLDEN_TF2_RIDGED_HASH = 'e117b1a8';
 const GOLDEN_TF2_BILLOW_HASH = 'b5d78012';
+// v1.6.0 -- fillField3, createNoise(42) / seedNoise(42), 32x32x32 Float32 volume,
+// scale=0.05, octaves=4, lacunarity=2, gain=0.5, over the raw Float32 bytes.
+const GOLDEN_FF3_FBM_HASH    = '60946816';
+const GOLDEN_FF3_RIDGED_HASH = '950f56bc';
+const GOLDEN_FF3_BILLOW_HASH = '9c7af46e';

@@ -1,6 +1,6 @@
 /**
- * @zakkster/lite-noise v1.5.2 — Zero-GC seeded Simplex + FBM + ridged/billow +
- * seamless loop + tileable field + curl + warp.
+ * @zakkster/lite-noise v1.6.0 — Zero-GC seeded Simplex + FBM + ridged/billow +
+ * seamless loop + tileable field + curl + warp + 3D scalar volume bakes.
  *
  * Two ways to sample:
  *   - `createNoise(seed)` returns a `Noise` instance owning its OWN permutation
@@ -48,6 +48,7 @@ export declare class Noise {
     curl3(x: number, y: number, z: number, out: Vec3): Vec3;
     warp2(x: number, y: number, strength: number, out: Vec2): Vec2;
     fillField2<T extends Float32Array | Float64Array>(out: T, w: number, h: number, opts?: FillField2Options): T;
+    fillField3<T extends Float32Array | Float64Array>(out: T, w: number, h: number, d: number, opts?: FillField3Options): T;
     tileableField2<T extends Float32Array | Float64Array>(out: T, w: number, h: number, opts: TileableField2Options): T;
 }
 
@@ -223,6 +224,59 @@ export declare function fillField2<T extends Float32Array | Float64Array>(
     w: number,
     h: number,
     opts?: FillField2Options,
+): T;
+
+/**
+ * Options for `fillField3`. Any field may be omitted; defaults shown. Reads use
+ * `opts?.x ?? default` so the omitted-opts path allocates nothing.
+ */
+export interface FillField3Options {
+    /** Coordinate step per cell (all three axes). Default 0.01. */
+    scale?: number;
+    /**
+     * Per-octave shaping. `'fbm'` signed (~[-1,1]); `'ridged'` `(1-|s|)^2`
+     * (~[0,1], sharp creases); `'billow'` `|s|` (~[0,1], folded). An unknown
+     * model throws a RangeError at setup. Default `'fbm'`.
+     */
+    model?: 'fbm' | 'ridged' | 'billow';
+    /** FBM octaves. Must be >= 1 for a non-zero field. Default 4. */
+    octaves?: number;
+    /** FBM lacunarity. Default 2.0. */
+    lacunarity?: number;
+    /** FBM gain. Default 0.5. */
+    gain?: number;
+    /** X coordinate at (0, 0, 0). Default 0. */
+    ox?: number;
+    /** Y coordinate at (0, 0, 0). Default 0. */
+    oy?: number;
+    /** Z coordinate at (0, 0, 0). Default 0. */
+    oz?: number;
+    /**
+     * Remap the baked volume to exact [0, 1] in a second in-place pass. A
+     * constant field maps to all-zero. Default false.
+     */
+    normalize?: boolean;
+}
+
+/**
+ * Bake a `w * h * d` scalar noise VOLUME into a caller-supplied TypedArray —
+ * the 3D sibling of `fillField2`. Row-major with z OUTER, then y, then x inner:
+ * the linear index of cell (x, y, z) is `((z*h)+y)*w + x`. Coordinates step
+ * incrementally (`px += scale`, no per-cell multiply). Zero allocation.
+ *
+ * Fail closed at setup, before `out` is written — and UNLIKE `fillField2`, which
+ * silently truncates a short buffer: an unknown `model`, a `w`/`h`/`d` that is
+ * not a positive integer (a non-integer dim would over-run the `w*h*d`-sized
+ * buffer), or `out.length < w*h*d` each throw a RangeError. A 3D volume is large
+ * enough (a 512^3 Float32 field is 512 MB) that a quiet truncation would hide a
+ * real sizing bug; `fillField2` itself is unchanged.
+ */
+export declare function fillField3<T extends Float32Array | Float64Array>(
+    out: T,
+    w: number,
+    h: number,
+    d: number,
+    opts?: FillField3Options,
 ): T;
 
 /**

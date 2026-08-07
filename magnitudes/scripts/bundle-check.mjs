@@ -15,7 +15,7 @@ import { build } from 'esbuild';
 import { gzipSync } from 'node:zlib';
 import { readFileSync, unlinkSync } from 'node:fs';
 
-const CEILING = 2816;                  // bytes, min+gz — self-contained, zero deps.
+const CEILING = 3180;                  // bytes, min+gz — self-contained, zero deps.
 // Rose from 2048 with v1.3.0: ridged2, billow2, noiseLoop, tileable2 (+ the
 // fillField2 `normalize` pass). ridged2/billow2 are one-line wrappers over a
 // shared `_octaves2` skeleton (that share is why two multifractals cost far less
@@ -24,8 +24,13 @@ const CEILING = 2816;                  // bytes, min+gz — self-contained, zero
 // Rose 2,560 -> 2,816 with v1.5.0: tileableField2 is a genuinely new double-loop
 // bake (harmonic-octave sum over _tileable2, three-model shaping, fail-closed
 // setup, normalize pass) the octave skeleton can't absorb -- it sums _tileable2,
-// not _simplex2. Measured 2,733 B min+gz; 2,816 is the deliberate new bound,
-// recorded in CHANGELOG [1.5.0]. ~83 B headroom.
+// not _simplex2. Measured 2,733 B min+gz; 2,816 was the v1.5.0 bound.
+// Rose 2,816 -> 3,180 with v1.6.0: fillField3 is a genuinely new triple-loop 3D
+// volume bake with fail-closed setup guards (unknown model, non-finite/<=0 dims,
+// undersized-buffer throw) and a normalize pass; _fbm3 refactored onto a shared
+// `_octaves3` mode-int skeleton (byte-identical mode-0, so fbm3/curl3 goldens
+// don't move). Measured 3,132 B min+gz; 3,180 is the deliberate new bound,
+// recorded in CHANGELOG [1.6.0]. ~48 B headroom.
 const OUT = 'test-bundle.js';
 
 await build({

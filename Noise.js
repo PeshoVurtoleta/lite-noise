@@ -1,8 +1,9 @@
 /**
- * @zakkster/lite-noise v1.5.2
+ * @zakkster/lite-noise v1.6.0
  *
  * Zero-GC seeded Simplex 2D/3D + FBM + ridged/billow multifractals + seamless
- * loop + tileable field + curl2 + curl3 + domain warp + bakeable heightfields.
+ * loop + tileable field + curl2 + curl3 + domain warp + bakeable heightfields
+ * and 3D scalar volumes.
  * Deterministic via a seeded permutation table.
  *
  * All hot-path functions allocate nothing. Caller-owned `out` for the vector-
@@ -235,20 +236,39 @@ function _tileable2(perm, x, y, periodX, periodY) {
         / (periodX * periodY);
 }
 
-function _fbm3(perm, x, y, z, octaves, lacunarity, gain) {
+// Shared 3D octave accumulator -- the exact structural sibling of _octaves2.
+// `mode` selects the per-octave shaping of the raw simplex3 sample: 0 = fbm
+// (signed pass-through), 1 = ridged, 2 = billow. The mode shaping matches
+// _octaves2 byte-for-byte (ridged: (1 - |s|)^2; billow: |s|), so a 3D field
+// carries the same model character its 2D siblings do. fbm3 is a one-line
+// wrapper over this at mode 0.
+//
+// mode-0 byte-parity: the skipped branches never touch `s`, and `let s =
+// _simplex3(...); total += s * amplitude` is the identical float arithmetic to
+// the previous inlined `total += _simplex3(...) * amplitude`. So fbm3 (and
+// therefore anything built on it) does not move. curl3 uses _simplex3 directly
+// and is untouched.
+function _octaves3(perm, x, y, z, octaves, lacunarity, gain, mode) {
     let amplitude = 1.0;
     let frequency = 1.0;
     let total = 0.0;
     let maxAmp = 0.0;
 
     for (let i = 0; i < octaves; i++) {
-        total += _simplex3(perm, x * frequency, y * frequency, z * frequency) * amplitude;
+        let s = _simplex3(perm, x * frequency, y * frequency, z * frequency);
+        if (mode === 1) { s = 1 - (s < 0 ? -s : s); s *= s; }  // ridged
+        else if (mode === 2) { s = s < 0 ? -s : s; }           // billow
+        total += s * amplitude;
         maxAmp += amplitude;
         amplitude *= gain;
         frequency *= lacunarity;
     }
 
     return maxAmp ? total / maxAmp : 0;
+}
+
+function _fbm3(perm, x, y, z, octaves, lacunarity, gain) {
+    return _octaves3(perm, x, y, z, octaves, lacunarity, gain, 0);
 }
 
 function _curl2(perm, x, y, out) {
@@ -447,6 +467,108 @@ function _tileableField2(perm, out, w, h, opts) {
     return out;
 }
 
+// Model string -> int mode for _fillField3. Decoded ONCE at setup, before the
+// triple loop, so the hot body branches on a small int (via _octaves3), never
+// re-parses a string per cell. `undefined` for an unknown key is the fail-closed
+// signal. Same table shape as _TF2_MODELS.
+const _FF3_MODELS = { fbm: 0, ridged: 1, billow: 2 };
+
+// Bake a w*h*d scalar volume into a caller-owned TypedArray -- the 3D sibling of
+// _fillField2. Row-major with z OUTER, then y, then x inner, so the linear index
+// is `((z*h)+y)*w + x`. Coordinates step incrementally (`px += scale` per cell,
+// `py`/`pz` per row/slab), never a per-cell multiply. Zero allocation in the bake.
+//
+// Model shaping is applied per octave inside _octaves3 (fbm signed ~[-1,1];
+// ridged (1-|s|)^2 ~[0,1]; billow |s| ~[0,1]) -- the same fbm/ridged/billow
+// character as the 2D samplers.
+//
+// FAIL CLOSED at SETUP, before `out` is touched. Unlike _fillField2 (which
+// silently truncates a short buffer), this THROWS: a 3D volume is large enough
+// (a 512^3 Float32 field is 512 MB) that a quiet truncation would hide a real
+// sizing bug behind a partially-baked field. So:
+//   - an unknown model throws a RangeError naming the valid set;
+//   - a w, h, or d that is not a positive INTEGER throws (a volume needs positive
+//     integer extent; non-integer dims would make the loop's `ceil(v)` iteration
+//     count diverge from `need = w*h*d`, under-counting the buffer -- see below);
+//   - `out.length < w*h*d` throws rather than bake a partial volume.
+// This differs from _fillField2 ON PURPOSE; _fillField2 itself is unchanged.
+function _fillField3(perm, out, w, h, d, opts) {
+    // Guarded reads -- same optional-chaining, no-`opts = {}` discipline as
+    // _fillField2 (zero-alloc whether opts is undefined, null, or an object).
+    const scale      = opts?.scale      ?? 0.01;
+    const octaves    = opts?.octaves    ?? 4;
+    const lacunarity = opts?.lacunarity ?? 2.0;
+    const gain       = opts?.gain       ?? 0.5;
+    const ox         = opts?.ox         ?? 0;
+    const oy         = opts?.oy         ?? 0;
+    const oz         = opts?.oz         ?? 0;
+    const model      = opts?.model      ?? 'fbm';
+    const normalize  = opts?.normalize  ?? false;
+
+    const mode = _FF3_MODELS[model];
+    if (mode === undefined) {
+        throw new RangeError(
+            "lite-noise: fillField3 unknown model '" + model +
+            "' -- expected 'fbm', 'ridged', or 'billow'");
+    }
+    // Each extent must be a positive INTEGER. `!(v > 0)` rejects NaN (an omitted
+    // or corrupt dim), 0, and negatives; `Number.isInteger` (which already implies
+    // finite, so it also rejects +-Infinity) rejects a NON-integer dim. Integer
+    // dims are mandatory because the triple loop iterates `x < w` etc. -- a
+    // non-integer dim would loop `ceil(w)` times while `need = w*h*d` under-counts,
+    // so a buffer sized to `need` would pass the length guard and then receive
+    // writes past its end (silent TypedArray no-ops), dropping cells with no error.
+    // Fail closed instead of flooring: a non-integer volume dim is a caller bug.
+    if (!(w > 0 && Number.isInteger(w)) ||
+        !(h > 0 && Number.isInteger(h)) ||
+        !(d > 0 && Number.isInteger(d))) {
+        throw new RangeError(
+            'lite-noise: fillField3 requires positive integer w, h, d (got ' +
+            w + ', ' + h + ', ' + d + ')');
+    }
+    // A 3D volume must not truncate silently (see the function header). Reject a
+    // buffer that cannot hold the whole field BEFORE writing anything.
+    const need = w * h * d;
+    if (out.length < need) {
+        throw new RangeError(
+            'lite-noise: fillField3 out too small -- need ' + need +
+            ' (' + w + 'x' + h + 'x' + d + '), got ' + out.length);
+    }
+
+    // Triple loop, z outer -> y -> x inner. Coordinates accumulate per axis so no
+    // cell pays a multiply; index runs monotonically 0..need-1 (row-major).
+    let idx = 0;
+    let pz = oz;
+    for (let z = 0; z < d; z++) {
+        let py = oy;
+        for (let y = 0; y < h; y++) {
+            let px = ox;
+            for (let x = 0; x < w; x++) {
+                out[idx++] = _octaves3(perm, px, py, pz, octaves, lacunarity, gain, mode);
+                px += scale;
+            }
+            py += scale;
+        }
+        pz += scale;
+    }
+
+    // Optional exact-[0,1] remap -- the identical two-pass scalar min/max as
+    // _fillField2: allocation-free, no temp buffer, constant field -> all-zero.
+    if (normalize) {
+        let mn = Infinity, mx = -Infinity;
+        for (let i = 0; i < need; i++) {
+            const v = out[i];
+            if (v < mn) mn = v;
+            if (v > mx) mx = v;
+        }
+        const range = mx - mn;
+        const inv = range > 0 ? 1 / range : 0;
+        for (let i = 0; i < need; i++) out[i] = (out[i] - mn) * inv;
+    }
+
+    return out;
+}
+
 // -- Instance API --
 
 /**
@@ -494,6 +616,7 @@ export class Noise {
     curl3(x, y, z, out) { return _curl3(this._perm, x, y, z, out); }
     warp2(x, y, strength, out) { return _warp2(this._perm, x, y, strength, out); }
     fillField2(out, w, h, opts) { return _fillField2(this._perm, out, w, h, opts); }
+    fillField3(out, w, h, d, opts) { return _fillField3(this._perm, out, w, h, d, opts); }
     tileableField2(out, w, h, opts) { return _tileableField2(this._perm, out, w, h, opts); }
 }
 
@@ -667,6 +790,37 @@ export function warp2(x, y, strength, out) { return _warp2(_perm, x, y, strength
  * @returns {Float32Array|Float64Array} The same `out` reference.
  */
 export function fillField2(out, w, h, opts) { return _fillField2(_perm, out, w, h, opts); }
+
+/**
+ * Bake a `w * h * d` scalar noise VOLUME into a caller-supplied TypedArray --
+ * the 3D sibling of `fillField2`. Row-major with z OUTER, then y, then x inner:
+ * the linear index of cell (x, y, z) is `((z*h)+y)*w + x`. Coordinates step
+ * incrementally (`px += scale` per cell, no per-cell multiply). Zero allocation
+ * once options are read.
+ *
+ * Model (`opts.model`, per-octave shaping): `fbm` signed (~[-1,1]); `ridged`
+ * `(1-|s|)^2` (~[0,1], sharp creases); `billow` `|s|` (~[0,1], folded) -- the
+ * same character as the 2D samplers.
+ *
+ * Fail closed at SETUP, before `out` is written (and UNLIKE `fillField2`, which
+ * silently truncates a short buffer): an unknown `model` throws a RangeError; a
+ * `w`/`h`/`d` that is not a positive integer throws (a non-integer dim would make
+ * the loop over-run the `w*h*d`-sized buffer); and `out.length < w*h*d` throws
+ * rather than bake a partial volume -- a 512^3 Float32 field is 512 MB, so a
+ * quiet truncation would hide a real sizing bug. `fillField2` is unchanged.
+ *
+ * `normalize: true` reuses `fillField2`'s two-pass exact-[0, 1] remap (no temp
+ * buffer). `out` is caller-owned and written start-to-end; do not alias it.
+ * @param {Float32Array|Float64Array} out Destination, `length >= w * h * d`.
+ * @param {number} w
+ * @param {number} h
+ * @param {number} d
+ * @param {{ scale?: number, octaves?: number, model?: 'fbm'|'ridged'|'billow',
+ *           lacunarity?: number, gain?: number, ox?: number, oy?: number,
+ *           oz?: number, normalize?: boolean }} [opts]
+ * @returns {Float32Array|Float64Array} The same `out` reference.
+ */
+export function fillField3(out, w, h, d, opts) { return _fillField3(_perm, out, w, h, d, opts); }
 
 /**
  * Bake a seamless, multifractal 2D field into a caller-supplied TypedArray --

@@ -3,7 +3,7 @@
 // Run this only when the underlying kernel deliberately changes.
 //   node scripts/regenerate-goldens.mjs
 
-import { seedNoise, fbm2, warp2, curl3, fillField2, tileableField2, createNoise } from '../../Noise.js';
+import { seedNoise, fbm2, warp2, curl3, fillField2, tileableField2, fillField3, createNoise } from '../../Noise.js';
 
 function fnv1a(bytes) {
     let h = 0x811c9dc5;
@@ -93,6 +93,19 @@ seedNoise(42);
         const f = new Float32Array(64 * 64);
         tileableField2(f, 64, 64, { model, periodX: 4, periodY: 4, octaves: 4, lacunarity: 2, gain: 0.5 });
         const tag = 'GOLDEN_TF2_' + model.toUpperCase();
+        console.log(tag.padEnd(18) + '=', fnv1a(new Uint8Array(f.buffer)).toString(16));
+    }
+}
+
+// v1.6.0 goldens -- fillField3, 32x32x32 Float32 volume, scale=0.05, octaves=4,
+// lacunarity=2, gain=0.5, one per model, via the MODULE functions after
+// seedNoise(42) (instance == module at the same seed).
+seedNoise(42);
+{
+    for (const model of ['fbm', 'ridged', 'billow']) {
+        const f = new Float32Array(32 * 32 * 32);
+        fillField3(f, 32, 32, 32, { model, scale: 0.05, octaves: 4, lacunarity: 2, gain: 0.5 });
+        const tag = 'GOLDEN_FF3_' + model.toUpperCase();
         console.log(tag.padEnd(18) + '=', fnv1a(new Uint8Array(f.buffer)).toString(16));
     }
 }

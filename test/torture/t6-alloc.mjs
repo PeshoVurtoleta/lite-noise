@@ -22,7 +22,7 @@
  * the gate must then reject the window. That is the T9 control, exercisable here.
  */
 
-import { createNoise, Noise, seedNoise, simplex2, simplex3, fbm2, fbm3, ridged2, billow2, noiseLoop, tileable2, curl2, curl3, warp2, fillField2, tileableField2 } from '../../Noise.js';
+import { createNoise, Noise, seedNoise, simplex2, simplex3, fbm2, fbm3, ridged2, billow2, noiseLoop, tileable2, curl2, curl3, warp2, fillField2, tileableField2, fillField3 } from '../../Noise.js';
 import { runOpsGate, bakeAlloc, BREAK, check, die, arrayBufferBytes, forceGc } from './harness.mjs';
 
 const OPS = 50000;
@@ -32,6 +32,11 @@ const WARMUP = 2000;
 // GCs + arrayBuffers instead of bytesPerOp.
 const BAKE_OPS = 2000;
 const BAKE_WARMUP = 100;
+// fillField3 bakes a 32^3 = 32768-cell volume/op -- 8x a 64x64 field. Fewer ops
+// still accumulate ample allocation pressure (500 * 32768 = 16M cells) to surface
+// a per-cell escape as a major GC, at a fraction of the wall time.
+const BAKE3_OPS = 500;
+const BAKE3_WARMUP = 50;
 
 /** Retained sink for the BREAK control -- survives GC so bytesPerOp climbs. */
 const leak = [];
@@ -48,14 +53,14 @@ function gate(name, fn, ops, warmup) {
 }
 
 /** Gate a heavy bake on major-GC and arrayBuffers rather than the noisy byte budget. */
-function bakeGate(name, fn) {
-    const { major, abDelta } = bakeAlloc(fn, { ops: BAKE_OPS, warmup: BAKE_WARMUP });
+function bakeGate(name, fn, ops = BAKE_OPS, warmup = BAKE_WARMUP) {
+    const { major, abDelta } = bakeAlloc(fn, { ops, warmup });
     check(major === 0,
-        () => `T6 ${name}: ${major} major GC(s) over ${BAKE_OPS} bakes -- retained per-bake allocation`);
+        () => `T6 ${name}: ${major} major GC(s) over ${ops} bakes -- retained per-bake allocation`);
     // Forced-GC on both sides, so anything left is a genuinely retained buffer.
     // 64 KB tolerance covers measureOps' own sample bookkeeping.
     check(abDelta < 64 * 1024,
-        () => `T6 ${name}: arrayBuffers grew ${abDelta} B across ${BAKE_OPS} bakes -- retained buffer allocation`);
+        () => `T6 ${name}: arrayBuffers grew ${abDelta} B across ${ops} bakes -- retained buffer allocation`);
 }
 
 export function run() {
@@ -76,6 +81,15 @@ export function run() {
     const TF2_RIDGED = { model: 'ridged', periodX: 4, periodY: 4, octaves: 4, lacunarity: 2, gain: 0.5 };
     const TF2_BILLOW = { model: 'billow', periodX: 4, periodY: 4, octaves: 4, lacunarity: 2, gain: 0.5 };
     const TF2_NORM = { model: 'fbm', periodX: 4, periodY: 4, octaves: 4, lacunarity: 2, gain: 0.5, normalize: true };
+
+    // fillField3 bakes a 32^3 = 32768-cell scalar volume per op -- a heavy bake,
+    // gated on major-GC + arrayBuffers like fillField2. One opts object per model,
+    // allocated ONCE, reused every op (the triple-loop body must not build one).
+    const field3 = new Float32Array(32 * 32 * 32);
+    const FF3_FBM = { model: 'fbm', scale: 0.05, octaves: 4, lacunarity: 2, gain: 0.5 };
+    const FF3_RIDGED = { model: 'ridged', scale: 0.05, octaves: 4, lacunarity: 2, gain: 0.5 };
+    const FF3_BILLOW = { model: 'billow', scale: 0.05, octaves: 4, lacunarity: 2, gain: 0.5 };
+    const FF3_NORM = { model: 'fbm', scale: 0.05, octaves: 4, lacunarity: 2, gain: 0.5, normalize: true };
 
     // --- Module surface -------------------------------------------------------
     gate('module.simplex2', (i) => { simplex2(i * 0.017, i * 0.023); if (BREAK) leak.push(new Float64Array(32)); }, OPS, WARMUP);
@@ -98,6 +112,10 @@ export function run() {
     bakeGate('module.tileableField2(ridged)', () => { tileableField2(field, 64, 64, TF2_RIDGED); });
     bakeGate('module.tileableField2(billow)', () => { tileableField2(field, 64, 64, TF2_BILLOW); });
     bakeGate('module.tileableField2(normalize)', () => { tileableField2(field, 64, 64, TF2_NORM); });
+    bakeGate('module.fillField3(fbm)', () => { fillField3(field3, 32, 32, 32, FF3_FBM); }, BAKE3_OPS, BAKE3_WARMUP);
+    bakeGate('module.fillField3(ridged)', () => { fillField3(field3, 32, 32, 32, FF3_RIDGED); }, BAKE3_OPS, BAKE3_WARMUP);
+    bakeGate('module.fillField3(billow)', () => { fillField3(field3, 32, 32, 32, FF3_BILLOW); }, BAKE3_OPS, BAKE3_WARMUP);
+    bakeGate('module.fillField3(normalize)', () => { fillField3(field3, 32, 32, 32, FF3_NORM); }, BAKE3_OPS, BAKE3_WARMUP);
 
     // --- Instance surface (must match the module's cost) ----------------------
     gate('instance.simplex2', (i) => { n.simplex2(i * 0.017, i * 0.023); }, OPS, WARMUP);
@@ -117,6 +135,10 @@ export function run() {
     bakeGate('instance.tileableField2(ridged)', () => { n.tileableField2(field, 64, 64, TF2_RIDGED); });
     bakeGate('instance.tileableField2(billow)', () => { n.tileableField2(field, 64, 64, TF2_BILLOW); });
     bakeGate('instance.tileableField2(normalize)', () => { n.tileableField2(field, 64, 64, TF2_NORM); });
+    bakeGate('instance.fillField3(fbm)', () => { n.fillField3(field3, 32, 32, 32, FF3_FBM); }, BAKE3_OPS, BAKE3_WARMUP);
+    bakeGate('instance.fillField3(ridged)', () => { n.fillField3(field3, 32, 32, 32, FF3_RIDGED); }, BAKE3_OPS, BAKE3_WARMUP);
+    bakeGate('instance.fillField3(billow)', () => { n.fillField3(field3, 32, 32, 32, FF3_BILLOW); }, BAKE3_OPS, BAKE3_WARMUP);
+    bakeGate('instance.fillField3(normalize)', () => { n.fillField3(field3, 32, 32, 32, FF3_NORM); }, BAKE3_OPS, BAKE3_WARMUP);
 
     // --- Construction allocates exactly one table -----------------------------
     // Warm the constructor so class/shape feedback is settled, then measure the
