@@ -1,0 +1,877 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>lite-gl &middot; Fractal Tunnel (lite-noise)</title>
+    <style>
+        *, *::before, *::after {
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-0: #07090d;
+            --bg-1: #0d1117;
+            --bg-2: #131922;
+            --bg-3: #1a2230;
+            --line: rgba(255, 255, 255, 0.06);
+            --line-strong: rgba(255, 255, 255, 0.14);
+            --text: #d8d6d2;
+            --text-dim: #8b8d94;
+            --text-faint: #555960;
+            --white: #ffffff;
+            --cream: #f5e6c8;
+            --amber: #f5b942;
+            --cyan: #7dd3fc;
+            --magenta: #e879a8;
+            --green: #5fe39f;
+            --glow-white: 0 0 12px rgba(255, 255, 255, 0.7), 0 0 30px rgba(255, 255, 255, 0.3);
+            --glow-amber: 0 0 12px rgba(245, 185, 66, 0.6), 0 0 30px rgba(245, 185, 66, 0.2);
+        }
+
+        html, body {
+            height: 100%;
+            margin: 0
+        }
+
+        body {
+            font-family: 'JetBrains Mono', ui-monospace, monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            color: var(--text);
+            background: var(--bg-0);
+            overflow: hidden;
+            font-feature-settings: "tnum"
+        }
+
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background: radial-gradient(circle at 50% 50%, transparent 0%, rgba(0, 0, 0, 0.4) 60%, rgba(0, 0, 0, 0.8) 100%);
+            z-index: 0
+        }
+
+        #app {
+            position: relative;
+            z-index: 2;
+            height: 100vh;
+            display: flex;
+            flex-direction: column
+        }
+
+        header.top {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+            padding: 14px 24px;
+            border-bottom: 1px solid var(--line);
+            background: linear-gradient(to bottom, var(--bg-1), var(--bg-0))
+        }
+
+        .brand {
+            display: flex;
+            align-items: baseline;
+            gap: 12px;
+            font-family: 'Space Mono', 'JetBrains Mono', monospace
+        }
+
+        .brand .mark {
+            color: var(--amber);
+            font-weight: 700;
+            font-size: 16px;
+            text-shadow: var(--glow-amber)
+        }
+
+        .brand .pkg {
+            color: var(--text);
+            font-weight: 700;
+            font-size: 15px
+        }
+
+        .brand .ver {
+            color: var(--text-faint);
+            font-size: 11px
+        }
+
+        .tagline {
+            color: var(--text-dim);
+            font-size: 11px;
+            margin-left: auto;
+            letter-spacing: .04em;
+            text-transform: uppercase
+        }
+
+        .tagline .dot {
+            display: inline-block;
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--green);
+            box-shadow: 0 0 12px rgba(95, 227, 159, 0.6);
+            margin-right: 6px;
+            animation: pulse 2s infinite ease-in-out;
+            vertical-align: 1px
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1
+            }
+            50% {
+                opacity: .35
+            }
+        }
+
+        main {
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            position: relative
+        }
+
+        .scene {
+            flex: 1;
+            display: flex;
+            min-height: 0
+        }
+
+        .stage {
+            flex: 1;
+            min-height: 0;
+            position: relative;
+            overflow: hidden;
+            background: #030408
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            touch-action: none;
+            cursor: grab
+        }
+
+        canvas:active {
+            cursor: grabbing
+        }
+
+        .panel {
+            width: 320px;
+            border-left: 1px solid var(--line);
+            background: var(--bg-1);
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto
+        }
+
+        .panel-head {
+            padding: 16px 20px 8px;
+            font-size: 10px;
+            letter-spacing: .18em;
+            text-transform: uppercase;
+            color: var(--text-faint);
+            border-bottom: 1px solid var(--line)
+        }
+
+        .panel section {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--line)
+        }
+
+        .panel section h3 {
+            margin: 0 0 12px;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: .16em;
+            text-transform: uppercase;
+            color: var(--green)
+        }
+
+        .help-line {
+            color: var(--text-dim);
+            font-size: 11px;
+            margin: 0 0 12px;
+            line-height: 1.6
+        }
+
+        .help-line code {
+            color: var(--green)
+        }
+
+        button.btn {
+            font-family: inherit;
+            font-size: 11px;
+            letter-spacing: .05em;
+            text-transform: uppercase;
+            background: var(--bg-3);
+            color: var(--text);
+            border: 1px solid var(--line-strong);
+            padding: 8px 14px;
+            cursor: pointer;
+            transition: all .12s
+        }
+
+        @media (hover: hover) {
+            button.btn:hover {
+                background: var(--bg-2);
+                border-color: var(--green);
+                color: var(--green)
+            }
+        }
+
+        button.btn.primary {
+            background: var(--bg-2);
+            color: var(--green);
+            border-color: var(--green);
+            font-weight: 700
+        }
+
+        button.btn[aria-pressed="true"] {
+            background: var(--bg-2);
+            color: var(--green);
+            border-color: var(--green)
+        }
+
+        .btn-row {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap
+        }
+
+        .field {
+            margin-bottom: 12px
+        }
+
+        .field label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 10px;
+            letter-spacing: .08em;
+            color: var(--text-faint);
+            text-transform: uppercase;
+            margin-bottom: 4px
+        }
+
+        .field input[type="range"] {
+            width: 100%;
+            accent-color: var(--green)
+        }
+
+        .field-value {
+            color: var(--green);
+            font-weight: 700;
+            font-variant-numeric: tabular-nums
+        }
+
+        .seg {
+            display: flex;
+            gap: 2px;
+            background: var(--bg-2);
+            border: 1px solid var(--line);
+            padding: 2px
+        }
+
+        .seg button {
+            flex: 1;
+            background: var(--bg-3);
+            border: 1px solid var(--line);
+            color: var(--text-dim);
+            padding: 6px 8px;
+            font-size: 10px;
+            letter-spacing: .05em;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: all .12s
+        }
+
+        .seg button[aria-pressed="true"] {
+            background: var(--green);
+            color: var(--bg-0);
+            border-color: var(--green);
+            font-weight: 700
+        }
+
+        @media (hover: hover) {
+            .seg button:hover {
+                color: var(--text)
+            }
+        }
+
+        .metrics {
+            display: grid;
+            grid-template-columns:1fr 1fr;
+            gap: 6px
+        }
+
+        .metric {
+            background: var(--bg-2);
+            border: 1px solid var(--line);
+            padding: 8px 10px
+        }
+
+        .metric .k {
+            font-size: 9px;
+            letter-spacing: .12em;
+            color: var(--text-faint);
+            text-transform: uppercase
+        }
+
+        .metric .v {
+            font-size: 16px;
+            font-weight: 500;
+            color: var(--text);
+            font-variant-numeric: tabular-nums;
+            margin-top: 2px
+        }
+
+        .metric .v.white {
+            color: var(--white)
+        }
+
+        .metric .v.green {
+            color: var(--green)
+        }
+
+        .metric .v.amber {
+            color: var(--amber)
+        }
+
+        .metric .v.cyan {
+            color: var(--cyan)
+        }
+
+        .metric .v.magenta {
+            color: var(--magenta)
+        }
+
+        .stage-overlay {
+            position: absolute;
+            pointer-events: none;
+            color: var(--text-dim);
+            font-size: 11px;
+            letter-spacing: .05em
+        }
+
+        .stage-overlay.tl {
+            top: 14px;
+            left: 18px
+        }
+
+        .stage-overlay.tr {
+            top: 14px;
+            right: 18px;
+            text-align: right
+        }
+
+        .stage-overlay.bl {
+            bottom: 14px;
+            left: 18px
+        }
+
+        .stage-overlay.br {
+            bottom: 14px;
+            right: 18px;
+            text-align: right
+        }
+
+        .stage-overlay .big {
+            display: block;
+            color: var(--green);
+            font-size: 22px;
+            font-weight: 500;
+            font-variant-numeric: tabular-nums;
+            text-shadow: 0 0 12px rgba(95, 227, 159, 0.6)
+        }
+
+        .stage-overlay .big.white {
+            color: var(--white);
+            text-shadow: var(--glow-white)
+        }
+
+        .stage-overlay .label {
+            font-size: 9px;
+            letter-spacing: .14em;
+            text-transform: uppercase;
+            color: var(--text-faint)
+        }
+
+        .no-webgl {
+            position: absolute;
+            inset: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            color: #f87171;
+            font-size: 12px;
+            letter-spacing: .05em
+        }
+
+        .no-webgl[data-active] {
+            display: flex
+        }
+    </style>
+</head>
+<body>
+<div id="app">
+    <header class="top">
+        <div class="brand">
+            <span class="mark">&#9678;</span>
+            <span class="pkg">@zakkster/lite-gl + lite-noise</span>
+            <span class="ver">v1.4.0 &middot; v1.6.0</span>
+        </div>
+        <div class="tagline"><span class="dot"></span>coherent noise &middot; fractal tunnel</div>
+    </header>
+
+    <main>
+        <section class="scene" data-scene="tunnel" data-active>
+            <div class="stage" id="t-stage">
+                <canvas id="t-canvas"></canvas>
+                <div class="no-webgl" id="t-nogl">WebGL2 unavailable in this browser.</div>
+                <div class="stage-overlay tl"><span class="label" id="t-noise-type">fbm3 &middot; simplex</span></div>
+                <div class="stage-overlay tr">
+                    <span class="label">points on gpu</span>
+                    <span class="big white" id="t-pts">0</span>
+                </div>
+                <div class="stage-overlay bl"><span class="label" id="t-depth">depth 0</span></div>
+                <div class="stage-overlay br"><span class="label">drag to look &middot; scroll to speed</span></div>
+            </div>
+            <aside class="panel">
+                <div class="panel-head">scene &middot; fractal tunnel (lite-noise)</div>
+                <section>
+                    <p class="help-line">
+                        A raymarch-style tunnel rebuilt from <code>LAYOUT.POINT</code> instances with
+                        <strong>coherent noise</strong> from <code>@zakkster/lite-noise</code>. Points ride a
+                        cylinder, are displaced by <code>fbm3</code> / <code>ridged2</code> / domain-warped FBM,
+                        optionally driven by <code>curl3</code> for volumetric motion, then blended
+                        <strong>additively</strong> for glow.
+                    </p>
+                    <div class="btn-row">
+                        <button class="btn primary" id="t-fly" aria-pressed="true">&#9654; fly</button>
+                        <button class="btn" id="t-reset">reset view</button>
+                    </div>
+                </section>
+                <section>
+                    <h3>Noise Type</h3>
+                    <div class="seg" id="t-noise">
+                        <button data-n="fbm" aria-pressed="true">FBM</button>
+                        <button data-n="ridged">Ridged</button>
+                        <button data-n="warp">Warp</button>
+                        <button data-n="curl">Curl</button>
+                    </div>
+                </section>
+                <section>
+                    <h3>Structure</h3>
+                    <div class="field">
+                        <label>points <span class="field-value" id="t-n-v">45K</span></label>
+                        <input type="range" id="t-n" min="10000" max="120000" step="5000" value="45000">
+                    </div>
+                    <div class="field">
+                        <label>octaves <span class="field-value" id="t-oct-v">4</span></label>
+                        <input type="range" id="t-oct" min="1" max="6" step="1" value="4">
+                    </div>
+                    <div class="field">
+                        <label>seed <span class="field-value" id="t-seed-v">42</span></label>
+                        <input type="range" id="t-seed" min="0" max="1000" step="1" value="42">
+                    </div>
+                </section>
+                <section>
+                    <h3>Fractal</h3>
+                    <div class="field">
+                        <label>lacunarity <span class="field-value" id="t-lac-v">2.0</span></label>
+                        <input type="range" id="t-lac" min="15" max="30" step="1" value="20">
+                    </div>
+                    <div class="field">
+                        <label>gain <span class="field-value" id="t-gain-v">0.5</span></label>
+                        <input type="range" id="t-gain" min="2" max="8" step="1" value="5">
+                    </div>
+                    <div class="field">
+                        <label>warp strength <span class="field-value" id="t-warp-v">1.5</span></label>
+                        <input type="range" id="t-warp" min="0" max="40" step="1" value="15">
+                    </div>
+                </section>
+                <section>
+                    <h3>Motion</h3>
+                    <div class="field">
+                        <label>noise amp <span class="field-value" id="t-amp-v">2.6</span></label>
+                        <input type="range" id="t-amp" min="0" max="60" step="1" value="26">
+                    </div>
+                    <div class="field">
+                        <label>twist <span class="field-value" id="t-tw-v">1.0×</span></label>
+                        <input type="range" id="t-tw" min="0" max="40" step="1" value="10">
+                    </div>
+                    <div class="field">
+                        <label>fly speed <span class="field-value" id="t-sp-v">1.0×</span></label>
+                        <input type="range" id="t-sp" min="0" max="40" step="1" value="10">
+                    </div>
+                </section>
+                <section>
+                    <h3>Telemetry</h3>
+                    <div class="metrics">
+                        <div class="metric">
+                            <div class="k">fps</div>
+                            <div class="v white" id="t-fps">60</div>
+                        </div>
+                        <div class="metric">
+                            <div class="k">drawn</div>
+                            <div class="v green" id="t-drawn">0</div>
+                        </div>
+                        <div class="metric">
+                            <div class="k">draw calls</div>
+                            <div class="v cyan" id="t-draws">1</div>
+                        </div>
+                        <div class="metric">
+                            <div class="k">depth</div>
+                            <div class="v magenta" id="t-z">0</div>
+                        </div>
+                    </div>
+                </section>
+            </aside>
+        </section>
+    </main>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "@zakkster/lite-gl": "https://esm.sh/@zakkster/lite-gl@1.4.0",
+    "@zakkster/lite-gl/backend": "https://esm.sh/@zakkster/lite-gl@1.4.0/backend",
+    "@zakkster/lite-noise": "https://esm.sh/@zakkster/lite-noise@1.6.0"
+  }
+}
+
+</script>
+
+<script type="module">
+    import {createField, LAYOUT} from "@zakkster/lite-gl";
+    import {createPointSink} from "@zakkster/lite-gl/backend";
+    import {createNoise} from "@zakkster/lite-noise";
+
+    const tunnel = (() => {
+        const TAU = Math.PI * 2;
+        const DPR = Math.min(2, window.devicePixelRatio || 1);
+        const fmt = (n) => (n >= 1e6 ? (Math.round(n / 1e4) / 100) + "M" : n >= 1e3 ? (Math.round(n / 100) / 10) + "K" : String(n | 0));
+        const $ = (id) => document.getElementById(id);
+        const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
+
+        const $canvas = $("t-canvas"), $nogl = $("t-nogl");
+        const $pts = $("t-pts"), $fps = $("t-fps"), $drawn = $("t-drawn"), $draws = $("t-draws");
+        const $z = $("t-z"), $depth = $("t-depth"), $noiseType = $("t-noise-type");
+        const $noiseSeg = $("t-noise");
+        const $fly = $("t-fly"), $reset = $("t-reset");
+        const $n = $("t-n"), $nV = $("t-n-v"), $oct = $("t-oct"), $octV = $("t-oct-v");
+        const $seed = $("t-seed"), $seedV = $("t-seed-v");
+        const $lac = $("t-lac"), $lacV = $("t-lac-v"), $gain = $("t-gain"), $gainV = $("t-gain-v");
+        const $warp = $("t-warp"), $warpV = $("t-warp-v");
+        const $amp = $("t-amp"), $ampV = $("t-amp-v"), $tw = $("t-tw"), $twV = $("t-tw-v");
+        const $sp = $("t-sp"), $spV = $("t-sp-v");
+
+        const gl = $canvas.getContext("webgl2", {antialias: false, alpha: false});
+        if (!gl) {
+            $nogl.setAttribute("data-active", "");
+            return {
+                resize() {
+                }, start() {
+                }, stop() {
+                }, destroy() {
+                }
+            };
+        }
+
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+        gl.clearColor(0.011, 0.014, 0.030, 1);
+
+        const R = 15, L = 360, NEAR = 4, FADE_IN = 30, FADE_OUT = 160, MAX_PTS = 120000;
+
+        const field = createField({capacity: MAX_PTS, stride: LAYOUT.POINT});
+        const sink = createPointSink(gl, {capacity: MAX_PTS});
+
+        // -- noise instances (zero-GC, deterministic, caller-owned outputs) --------
+        let noise = createNoise(42);           // displacement noise
+        const curlNoise = createNoise(7);      // curl for secondary motion
+        const warpOut = {x: 0, y: 0};        // caller-owned warp output
+        const curlOut = {x: 0, y: 0, z: 0};  // caller-owned curl output
+
+        // -- per-point fixed params (seeded once, never reallocated) --------------
+        const pTheta = new Float32Array(MAX_PTS);
+        const pZ = new Float32Array(MAX_PTS);
+        const pRand = new Float32Array(MAX_PTS);
+        const pX0 = new Float32Array(MAX_PTS);
+        const pY0 = new Float32Array(MAX_PTS);
+        (function seed() {
+            for (let i = 0; i < MAX_PTS; i++) {
+                const h1 = Math.abs((Math.sin(i * 12.9898 + 78.233) * 43758.5453) % 1);
+                const h2 = Math.abs((Math.sin(i * 63.7264 + 10.873) * 12345.6789) % 1);
+                const h3 = Math.abs((Math.sin(i * 1.1234 + 100.123) * 9876.5432) % 1);
+                pTheta[i] = h1 * TAU;
+                pZ[i] = h2 * L;
+                pRand[i] = h3;
+                const rr = R * (0.85 + h3 * 0.30);
+                pX0[i] = rr * Math.cos(h1 * TAU);
+                pY0[i] = rr * Math.sin(h1 * TAU);
+            }
+        })();
+
+        let W = 1, H = 1, cx = 0, cy = 0, focal = 1;
+        let numPts = 45000, octaves = 4, lacunarity = 2.0, gainVal = 0.5, warpStrength = 1.5;
+        let noiseAmp = 2.6, twistAmt = 1.0, flySpeed = 1.0;
+        let noiseMode = "fbm";  // fbm | ridged | warp | curl
+        let flying = true, flyZ = 0, yaw = 0, pitch = 0;
+        let running = false, raf = 0, t0 = performance.now(), fpsT = t0, fpsN = 0, lastDrawn = 0;
+
+        // ======================================================================
+        // MAIN PROJECTION
+        // ======================================================================
+        function layout(t) {
+            const d = field.data;
+            const camX = Math.sin(t * 0.5) * 5;
+            const camY = Math.cos(t * 0.4) * 3;
+            const cyaw = Math.cos(yaw), syaw = Math.sin(yaw);
+            const cpit = Math.cos(pitch), spit = Math.sin(pitch);
+            const zRef = 60, sizeRef = 2.4 * DPR;
+            let count = 0;
+
+            for (let i = 0; i < numPts; i++) {
+                const th = pTheta[i];
+                let zw = pZ[i] - flyZ;
+                zw = zw - Math.floor(zw / L) * L;
+                if (zw < NEAR) continue;
+
+                // -- coherent noise displacement --------------------------------------
+                let dx = 0, dy = 0, dz = 0;
+                const scaleA = 0.08, scaleZ = 0.015, scaleT = 0.15;
+
+                if (noiseMode === "fbm") {
+                    // FBM: smooth, continuous, band-limited
+                    dx = noise.fbm3(th * scaleA, zw * scaleZ, t * scaleT, octaves, lacunarity, gainVal);
+                    dy = noise.fbm3(th * scaleA + 100, zw * scaleZ + 100, t * scaleT, octaves, lacunarity, gainVal);
+                    dz = noise.fbm3(th * scaleA + 200, zw * scaleZ + 200, t * scaleT, octaves, lacunarity, gainVal);
+                } else if (noiseMode === "ridged") {
+                    // Ridged: sharp creases, crystalline walls
+                    const r2x = noise.ridged2(th * scaleA, zw * scaleZ, octaves, lacunarity, gainVal);
+                    const r2y = noise.ridged2(th * scaleA + 100, zw * scaleZ + 100, octaves, lacunarity, gainVal);
+                    dx = (r2x * 2 - 1);  // remap [0,1] to [-1,1]
+                    dy = (r2y * 2 - 1);
+                    dz = noise.simplex3(th * scaleA, zw * scaleZ, t * scaleT) * 0.5;
+                } else if (noiseMode === "warp") {
+                    // Domain warp: Quilez-style for organic caves
+                    noise.warp2(th * scaleA, zw * scaleZ, warpStrength, warpOut);
+                    dx = noise.fbm2(warpOut.x, warpOut.y + t * scaleT, octaves, lacunarity, gainVal);
+                    noise.warp2(th * scaleA + 100, zw * scaleZ + 100, warpStrength, warpOut);
+                    dy = noise.fbm2(warpOut.x, warpOut.y + t * scaleT, octaves, lacunarity, gainVal);
+                    dz = noise.simplex3(th * scaleA, zw * scaleZ, t * scaleT) * 0.5;
+                } else if (noiseMode === "curl") {
+                    // Curl: divergence-free volumetric flow
+                    curlNoise.curl3(th * scaleA, zw * scaleZ, t * scaleT, curlOut);
+                    dx = curlOut.x;
+                    dy = curlOut.y;
+                    dz = curlOut.z * 0.5;
+                }
+
+                let x = pX0[i] + dx * noiseAmp;
+                let y = pY0[i] + dy * noiseAmp;
+                let z = zw + dz * noiseAmp * 0.6;
+
+                // twist
+                const tw = z * 0.02 * twistAmt + t * 0.15;
+                const ct = Math.cos(tw), st = Math.sin(tw);
+                const xr = x * ct - y * st;
+                const yr = x * st + y * ct;
+
+                const px = xr - camX;
+                const py = yr - camY;
+
+                const wx = px * cyaw + z * syaw;
+                const wz = -px * syaw + z * cyaw;
+                const wy = py * cpit - wz * spit;
+                const wz2 = py * spit + wz * cpit;
+                if (wz2 < NEAR) continue;
+
+                const inv = focal / wz2;
+                const sxp = cx + wx * inv;
+                const syp = cy + wy * inv;
+                if (sxp < -32 || sxp > W + 32 || syp < -32 || syp > H + 32) continue;
+
+                const size = Math.max(0.5, sizeRef * (zRef / wz2));
+                const fadeIn = clamp01((wz2 - NEAR) / FADE_IN);
+                const fadeOut = 1 - clamp01((wz2 - (L - FADE_OUT)) / FADE_OUT);
+                const glow = 0.45 + 0.55 * Math.min(1, Math.abs(dz) * 0.4 + 0.35);
+                const alpha = fadeIn * fadeOut * glow * 0.55;
+                if (alpha < 0.01) continue;
+
+                const heat = clamp01(Math.abs(dz) * 0.35);
+                const b = count * 8;
+                d[b] = sxp;
+                d[b + 1] = syp;
+                d[b + 2] = size;
+                d[b + 3] = 1.0;
+                d[b + 4] = 0.92 - heat * 0.18;
+                d[b + 5] = 0.78 - heat * 0.30;
+                d[b + 6] = alpha;
+                d[b + 7] = 0;
+                count++;
+            }
+
+            field.setCount(count);
+            field.touchAll();
+            lastDrawn = count;
+        }
+
+        function frame() {
+            if (!running) return;
+            const now = performance.now();
+            const t = (now - t0) * 0.001;
+            if (flying) flyZ += flySpeed * 0.9;
+
+            layout(t);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+            field.flush(sink);
+
+            fpsN++;
+            if (now - fpsT >= 500) {
+                $fps.textContent = Math.round(fpsN * 1000 / (now - fpsT));
+                $pts.textContent = fmt(numPts);
+                $drawn.textContent = fmt(lastDrawn);
+                $draws.textContent = "1";
+                $z.textContent = Math.round(flyZ);
+                $depth.textContent = "depth " + Math.round(flyZ);
+                fpsT = now;
+                fpsN = 0;
+            }
+            raf = requestAnimationFrame(frame);
+        }
+
+        const ac = new AbortController();
+        const sig = ac.signal;
+        let dragging = false, lx = 0, ly = 0;
+
+        $fly.addEventListener("click", () => {
+            flying = !flying;
+            $fly.setAttribute("aria-pressed", flying ? "true" : "false");
+            $fly.textContent = flying ? "> fly" : "|| paused";
+        }, {signal: sig});
+
+        $reset.addEventListener("click", () => {
+            yaw = 0;
+            pitch = 0;
+            flyZ = 0;
+        }, {signal: sig});
+
+        $noiseSeg.addEventListener("click", (e) => {
+            const btn = e.target.closest("button[data-n]");
+            if (!btn) return;
+            noiseMode = btn.dataset.n;
+            for (const b of $noiseSeg.children) b.setAttribute("aria-pressed", b === btn);
+            $noiseType.textContent = noiseMode + " - simplex";
+        }, {signal: sig});
+
+        $n.addEventListener("input", () => {
+            numPts = +$n.value;
+            $nV.textContent = fmt(numPts);
+        }, {signal: sig});
+        $oct.addEventListener("input", () => {
+            octaves = +$oct.value;
+            $octV.textContent = octaves;
+        }, {signal: sig});
+        $seed.addEventListener("input", () => {
+            const s = +$seed.value;
+            $seedV.textContent = s;
+            noise.seed(s);  // re-seed in place, zero alloc
+            curlNoise.seed(s + 7);  // keep curl field decorrelated (offset 7)
+        }, {signal: sig});
+        $lac.addEventListener("input", () => {
+            lacunarity = +$lac.value / 10;
+            $lacV.textContent = lacunarity.toFixed(1);
+        }, {signal: sig});
+        $gain.addEventListener("input", () => {
+            gainVal = +$gain.value / 10;
+            $gainV.textContent = gainVal.toFixed(1);
+        }, {signal: sig});
+        $warp.addEventListener("input", () => {
+            warpStrength = +$warp.value / 10;
+            $warpV.textContent = warpStrength.toFixed(1);
+        }, {signal: sig});
+        $amp.addEventListener("input", () => {
+            noiseAmp = +$amp.value / 10;
+            $ampV.textContent = noiseAmp.toFixed(1);
+        }, {signal: sig});
+        $tw.addEventListener("input", () => {
+            twistAmt = +$tw.value / 10;
+            $twV.textContent = twistAmt.toFixed(1) + "×";
+        }, {signal: sig});
+        $sp.addEventListener("input", () => {
+            flySpeed = +$sp.value / 10;
+            $spV.textContent = flySpeed.toFixed(1) + "×";
+        }, {signal: sig});
+
+        $canvas.addEventListener("pointerdown", (e) => {
+            dragging = true;
+            lx = e.clientX;
+            ly = e.clientY;
+            $canvas.setPointerCapture(e.pointerId);
+        }, {signal: sig});
+        $canvas.addEventListener("pointermove", (e) => {
+            if (!dragging) return;
+            yaw += (e.clientX - lx) * 0.003;
+            pitch += (e.clientY - ly) * 0.003;
+            pitch = Math.max(-1.2, Math.min(1.2, pitch));
+            lx = e.clientX;
+            ly = e.clientY;
+        }, {signal: sig});
+        $canvas.addEventListener("pointerup", (e) => {
+            dragging = false;
+            $canvas.releasePointerCapture(e.pointerId);
+        }, {signal: sig});
+        $canvas.addEventListener("wheel", (e) => {
+            e.preventDefault();
+            flySpeed = Math.max(0, Math.min(4, flySpeed + (e.deltaY > 0 ? -0.15 : 0.15)));
+            $sp.value = Math.round(flySpeed * 10);
+            $spV.textContent = flySpeed.toFixed(1) + "×";
+        }, {signal: sig, passive: false});
+
+        function resize() {
+            const r = $canvas.getBoundingClientRect();
+            W = Math.max(1, Math.floor(r.width * DPR));
+            H = Math.max(1, Math.floor(r.height * DPR));
+            cx = W * 0.5;
+            cy = H * 0.5;
+            focal = Math.min(W, H) * 1.15;
+            $canvas.width = W;
+            $canvas.height = H;
+            sink.resize(W, H);
+        }
+
+        return {
+            resize,
+            start() {
+                if (running) return;
+                running = true;
+                t0 = performance.now();
+                fpsT = t0;
+                fpsN = 0;
+                raf = requestAnimationFrame(frame);
+            },
+            stop() {
+                running = false;
+                if (raf) cancelAnimationFrame(raf);
+                raf = 0;
+            },
+            destroy() {
+                this.stop();
+                ac.abort();
+                sink.dispose();
+            }
+        };
+    })();
+
+    requestAnimationFrame(() => {
+        tunnel.resize();
+        tunnel.start();
+    });
+    window.addEventListener("resize", () => tunnel.resize());
+    window.addEventListener("pagehide", () => tunnel.destroy());
+</script>
+</body>
+</html>
